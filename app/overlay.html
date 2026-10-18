@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Wardogs обвесы</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: rgba(14, 16, 12, 0.88);
+    --line: rgba(190, 200, 150, 0.18);
+    --text: #e9ecdf;
+    --dim: #9aa38a;
+    --accent: #e8a33a;
+    --good: #5fd068;
+    --bad: #ff5a4e;
+  }
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  body { font-family: "Oswald", "Bahnschrift", "Segoe UI", sans-serif; color: var(--text); }
+
+  #panel {
+    position: absolute; top: 24px; left: 24px; width: 380px;
+    background: var(--bg); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+    padding: 14px 16px 12px; box-shadow: 0 8px 30px rgba(0,0,0,.45);
+    transform: translateX(-120%); opacity: 0; transition: transform .35s ease, opacity .35s ease;
+  }
+  #panel.show { transform: none; opacity: 1; }
+  body.right #panel { left: auto; right: 24px; transform: translateX(120%); border-left: 1px solid var(--line); border-right: 4px solid var(--accent); }
+  body.right #panel.show { transform: none; }
+
+  .head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .weapon { font-size: 30px; font-weight: 700; letter-spacing: .5px; line-height: 1; text-transform: uppercase; }
+  .cls { font-size: 13px; color: var(--accent); text-transform: uppercase; letter-spacing: 1.5px; white-space: nowrap; }
+  .base { font-size: 13px; color: var(--dim); margin-top: 6px; letter-spacing: .3px; }
+
+  .atts { margin: 10px 0 8px; padding: 8px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .att { display: flex; gap: 8px; align-items: baseline; font-size: 15px; line-height: 1.5; }
+  .slot { flex: 0 0 74px; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
+  .none { color: var(--dim); font-size: 14px; }
+
+  .stat { display: grid; grid-template-columns: 1fr 104px 66px; align-items: center; gap: 10px; font-size: 15px; line-height: 1.75; }
+  .bar { height: 6px; background: rgba(255,255,255,.08); position: relative; }
+  .bar i { position: absolute; top: 0; bottom: 0; }
+  .bar .mid { left: 50%; width: 1px; background: rgba(255,255,255,.35); }
+  .val { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .good { color: var(--good); } .bad { color: var(--bad); } .neutral { color: var(--text); }
+  .src { margin-top: 8px; font-size: 10px; color: var(--dim); opacity: .7; letter-spacing: .5px; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <div class="head"><div class="weapon" id="weapon"></div><div class="cls" id="cls"></div></div>
+  <div class="base" id="base"></div>
+  <div class="atts" id="atts"></div>
+  <div id="stats"></div>
+  <div class="src">Данные: metaforge.app</div>
+</div>
+
+<script src="wardogs_data.js"></script>
+<script>
+// Перевод статов. better: "low" — чем меньше, тем лучше; "high" — чем больше, тем лучше; null — просто показать.
+const STATS = {
+  "ADS zoom":                      ["Зум прицела", null],
+  "Vertical recoil":              ["Отдача вверх", "low"],
+  "Horizontal recoil":             ["Отдача вбок", "low"],
+  "Spread":                        ["Разброс", "low"],
+  "ADS time":                      ["Время прицеливания", "low"],
+  "Aim sway":                      ["Качание прицела", "low"],
+  "Equip speed":                   ["Скорость доставания", "high"],
+  "Stabilisation time":            ["Время стабилизации", "low"],
+  "Sway speed":                    ["Скорость качания", "low"],
+  "Sway from horizontal movement": ["Качание при стрейфе", "low"],
+  "Sway from vertical movement":   ["Качание в прыжке", "low"],
+  "Translation stabilisation":     ["Стабилиз. в движении", "low"],
+  "Rotation stabilisation":        ["Стабилиз. при повороте", "low"],
+};
+const ORDER = Object.keys(STATS);
+const SLOT_RU = { Optic: "Прицел", Muzzle: "Дуло", Suppressor: "Глушитель", Foregrip: "Рукоять", Magazine: "Магазин", Bipod: "Сошки", Ammunition: "Магазин" };
+const CLASS_RU = { "Assault Rifle": "Штурмовая", "Submachine Gun": "ПП", "Sniper Rifle": "Снайперка", "Marksman Rifle": "Марксман", "Light Machine Gun": "Пулемёт", "Pistol": "Пистолет", "Shotgun": "Дробовик", "Launcher": "Гранатомёт", "Bow": "Лук" };
+const MAX_ROWS = 10;
+
+const weapons = Object.fromEntries(WARDOGS.W.map(w => [w[0], w]));
+const atts = Object.fromEntries(WARDOGS.A.map(a => [a[0], a]));
+
+const params = new URLSearchParams(location.search);
+if (params.get("side") === "right") document.body.classList.add("right");
+
+function render(state) {
+  const panel = document.getElementById("panel");
+  const w = state && weapons[state.weapon];
+  if (!w) { panel.classList.remove("show"); return; }
+
+  document.getElementById("weapon").textContent = w[0];
+  document.getElementById("cls").textContent = CLASS_RU[w[1]] || w[1] || "";
+  document.getElementById("base").textContent =
+    [w[2] && `Урон ${w[2]}`, w[3] && w[3].replace("rpm", "в/мин"), w[4] && `Дальность ${w[4].replace(" m", " м")}`, w[5] && `Прицел. ${w[5].replace("s", " с")}`]
+      .filter(Boolean).join("  ·  ");
+
+  const list = (state.attachments || []).map(n => atts[n]).filter(Boolean);
+  const attsEl = document.getElementById("atts");
+  attsEl.innerHTML = list.length
+    ? list.map(a => `<div class="att"><span class="slot">${SLOT_RU[a[1]] || a[1]}</span><span>${a[0]}</span></div>`).join("")
+    : `<div class="none">Без обвесов</div>`;
+
+  // Эффект: [стат, значение] — умножить; [.., "="] — заменить; [.., "+"] — прибавить.
+  // Итог как в игре: (родное или заменённое + прибавки) × множители; храним «во сколько раз изменилось».
+  const mult = {}, over = {}, add = {};
+  for (const a of list) for (const [attr, v, op] of a[2]) {
+    if (op === "=") over[attr] = v;
+    else if (op === "+") add[attr] = (add[attr] ?? 0) + v;
+    else mult[attr] = (mult[attr] ?? 1) * v;
+  }
+  const adsBase = w[5] ? parseFloat(w[5]) : NaN;
+  const total = {};
+  for (const attr of new Set([...Object.keys(mult), ...Object.keys(over), ...Object.keys(add)])) {
+    const base = attr === "ADS time" && !isNaN(adsBase) ? adsBase : 1;
+    total[attr] = (((attr in over) ? over[attr] : base) + (add[attr] ?? 0)) * (mult[attr] ?? 1) / base;
+  }
+
+  const rows = ORDER.filter(k => total[k] !== undefined && Math.abs(total[k] - 1) >= 0.005)
+    .map(k => ({ k, m: total[k] }))
+    .slice(0, MAX_ROWS);  // порядок — как в STATS: сначала самое важное
+
+  // Время прицеливания — в секундах: у пушки есть родное время (AK74 — 0.45 с), обвесы его умножают
+  const baseAds = w[5] ? parseFloat(w[5]) : NaN;
+  const sec = x => x.toFixed(2).replace(".", ",");
+  document.getElementById("stats").innerHTML = rows.map(({ k, m }) => {
+    let [name, better] = STATS[k];
+    if (!better) return `<div class="stat"><span>${name}</span><span></span><span class="val neutral">${+m.toFixed(1)}×</span></div>`;
+    const pct = Math.round((m - 1) * 100);
+    let valueText = null;
+    if (k === "ADS time" && !isNaN(baseAds)) {
+      const now = Math.round(baseAds * m * 100) / 100, diff = now - Math.round(baseAds * 100) / 100;
+      name = `Прицел. ${sec(baseAds)}→${sec(now)} с`;
+      valueText = `${diff > 0 ? "+" : diff < 0 ? "−" : "±"}${sec(Math.abs(diff))} с`;
+    }
+    const good = better === "low" ? pct < 0 : pct > 0;
+    const cls = good ? "good" : "bad";
+    const width = Math.min(50, Math.abs(pct) * 1.25);
+    const color = good ? "var(--good)" : "var(--bad)";
+    // Хорошее растёт вправо, плохое влево.
+    const pos = good ? `left:50%;width:${width}%` : `right:50%;width:${width}%`;
+    return `<div class="stat"><span>${name}</span><span class="bar"><i class="mid"></i><i style="${pos};background:${color}"></i></span><span class="val ${cls}">${valueText || (pct > 0 ? "+" : "−") + Math.abs(pct) + "%"}</span></div>`;
+  }).join("") || `<div class="none">Обвесы не меняют статы</div>`;
+
+  panel.classList.add("show");
+}
+
+// Демо-режим: overlay.html?demo
+if (params.has("demo")) {
+  render({ weapon: "AK74", attachments: ["CQB 74 Brake", "RK6 Tactical Foregrip", "2.5x Combat Optic", "AK74 60 RND Magazine"] });
+} else {
+  let last = "";
+  async function poll() {
+    try {
+      const r = await fetch("/state", { cache: "no-store" });
+      const txt = await r.text();
+      if (txt !== last) { last = txt; render(JSON.parse(txt)); }
+    } catch (e) { /* программа распознавания не запущена — просто ждём */ }
+    setTimeout(poll, 500);
+  }
+  poll();
+}
+</script>
+</body>
+</html>

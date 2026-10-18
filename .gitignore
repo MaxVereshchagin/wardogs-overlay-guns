@@ -1,0 +1,25 @@
+# Python и библиотеки — в готовом архиве на странице Releases, не в коде
+python/
+__pycache__/
+
+# Данные MetaForge и иконки из игры — программа скачивает их сама при первом запуске
+app/wardogs_data.js
+app/wardogs_data.prev.js
+app/icons.json
+app/icons/
+app/metaforge_raw/
+
+# Личное: журналы, память распознавания, настройки, события
+app/*.log
+app/*.log.*
+app/recognition_cache.json
+app/recognition_cache.json.tmp
+app/settings.json
+app/события.txt
+app/unknown_names.txt
+app/debug_miss.jpg
+
+# Проверки: скриншоты из игры и результаты прогонов
+tests/screens/
+tests/report.txt
+tests/run_output.txt

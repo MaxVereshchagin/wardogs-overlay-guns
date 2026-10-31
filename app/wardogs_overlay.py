@@ -27,9 +27,30 @@ import time
 import cv2
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# Обычный запуск: всё лежит в папке app рядом с этим файлом.
+# WardogsOverlay.exe (PyInstaller): код и образцы надписей распакованы во временную папку (BUNDLE),
+# а база, иконки, настройки, память и журналы — рядом с самим .exe (HERE), чтобы их можно было менять.
+FROZEN = getattr(sys, "frozen", False)
+HERE = os.path.dirname(sys.executable) if FROZEN else os.path.dirname(os.path.abspath(__file__))
+BUNDLE = getattr(sys, "_MEIPASS", HERE)
 sys.path.insert(0, HERE)
+if FROZEN and "--update-db" in sys.argv:      # .exe сам себе «обновить базу» (вместо python update_database.py)
+    import update_database
+    sys.exit(update_database.run())
+if FROZEN and len(sys.argv) == 1:              # двойной щелчок по .exe — обычный запуск со значком у часов
+    sys.argv.append("--tray")
 import server  # noqa: E402
+
+VERSION = "1.5"
+GUIDE_URL = "https://steamcommunity.com/sharedfiles/filedetails/?id=3822235930"   # руководство: там новые версии
+ICON_FILE = os.path.join(BUNDLE, "overlay.ico")
+
+
+def updater_cmd():
+    """Как запустить обновление базы отдельным процессом."""
+    if FROZEN:
+        return [sys.executable, "--update-db"]
+    return [sys.executable, "-I", os.path.join(HERE, "update_database.py")]
 
 # Подробный журнал работы: overlay.log рядом с программой (проверка на скриншотах — overlay_test.log).
 # Пишется всегда; больше 5 МБ — старый переименовывается в overlay.log.1.
@@ -82,6 +103,9 @@ def describe_build(st):
             parts.append(f"магазин {a[4] if len(a) > 4 and a[4] else (m.group(1) if m else '')}".strip())
         else:
             parts.append(n)
+    if st.get("tab") == "ammo":   # вкладка «Боеприпасы»: магазин и патроны
+        rnd = {"FMJ": "обычные", "HollowPoint": "HP", "ArmorPiercing": "AP"}.get(st.get("ammo"), "не выбраны")
+        return f"{st['weapon']} (патроны): " + ", ".join(parts + [f"патроны {rnd}"])
     return f"{st['weapon']}: " + (", ".join(parts) if parts else "без обвесов")
 
 
@@ -125,7 +149,24 @@ DEFAULT_SETTINGS = {
     "hotkey": "Ctrl+Shift+O",  # включить/выключить поиск меню прямо в игре (Ctrl/Shift/Alt/Win + буква, цифра или F1–F12)
     "auto_off_seconds": 10,    # меню «Модули» не видно столько секунд — поиск засыпает (0 — никогда)
     "confirm_frames": 2,       # сколько кадров подряд должно совпасть, чтобы плашка поменялась
+    "compare_hotkey": "Ctrl+Shift+S",  # запомнить сборку и сравнивать с ней (работает, только пока видна плашка)
+    "check_updates": True,     # при запуске заглянуть в руководство Steam: не вышла ли новая версия
 }
+
+
+def save_settings(changes):
+    """Записать изменённые настройки в settings.json (остальное, в том числе незнакомое, — как было)."""
+    path = os.path.join(HERE, "settings.json")
+    s = dict(DEFAULT_SETTINGS)
+    if os.path.exists(path):
+        try:
+            s.update(json.load(open(path, encoding="utf-8-sig")))
+        except Exception as e:
+            log.error("settings.json не читается — запишу заново: %s", e)
+    s.update(changes)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(s, f, ensure_ascii=False, indent=2)
+    log.info("Настройки сохранены: %s", json.dumps(changes, ensure_ascii=False))
 
 
 def load_settings():
@@ -157,7 +198,7 @@ def ensure_database():
             print(msg, flush=True)
     except Exception:
         pass
-    r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "update_database.py")], cwd=HERE,
+    r = subprocess.run(updater_cmd(), cwd=HERE,
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0 or not os.path.exists(data):
         text = ("Не получилось скачать базу с MetaForge — нужен интернет при первом запуске.\n\n"
@@ -177,6 +218,10 @@ def load_db():
     try:   # формат update_database.py: window.WARDOGS = {...json...};
         data = json.loads(js[js.index("{", i): js.rindex("}") + 1])
         log.debug("База: данные MetaForge от %s", data.get("generatedAt"))
+        BALL.clear()
+        BALL.update(data.get("B") or {})   # баллистика для TTK (нет в старой базе — TTK не показываем)
+        if not BALL:
+            log.warning("В базе нет баллистики — TTK не покажу (обнови базу)")
         return data["W"], data["A"]
     except ValueError:   # самый первый формат (W и A отдельными кусками)
         W = json.loads(re.search(r"W:(\[.*?\]\]),\s*\n", js, re.S).group(1))
@@ -184,7 +229,26 @@ def load_db():
         return W, A
 
 
+BALL = {}   # баллистика MetaForge (для TTK), заполняет load_db
 W_LIST, A_LIST = load_db()
+
+
+def weapon_calibre(weapon):
+    w = next((x for x in BALL.get("weapons", []) if x.get("name") == weapon), None)
+    return w and w.get("calibre")
+
+
+def round_icons(weapon):
+    """Иконки коробок патронов этой пушки: {"FMJ": "AMMO|556mm|FMJ", …} (только те, что скачаны)."""
+    cal = weapon_calibre(weapon)
+    icons = ((BALL.get("calibres") or {}).get(cal or "") or {}).get("roundIcons") or {}
+    return {r: f"AMMO|{cal}|{r}" for r, f in icons.items()
+            if os.path.exists(os.path.join(HERE, "icons", f + ".webp"))}
+
+
+def round_icon_file(name):
+    _, cal, rnd = name.split("|")
+    return BALL["calibres"][cal]["roundIcons"][rnd]
 WEAPONS = {w[0]: w for w in W_LIST}
 ATTS = {a[0]: a for a in A_LIST}
 ICONS = json.load(open(os.path.join(HERE, "icons.json"), encoding="utf-8-sig"))
@@ -220,6 +284,8 @@ ALIASES = {
     "ПП-19 БИЗОН": "PP-19 Bizon",
     "ПП-19 ВИТЯЗЬ": "PP-19 Vityaz",
     "ВЕРБА": "9K333 Verba",
+    "БЛОЧНЫЙ ЛУК": "Compound Bow",
+    "SNOHHDIN IYK": "Compound Bow",   # так «БЛОЧНЫЙ ЛУК» читается на 1280×720 (снимок Макса 30.10)
 }
 _WEAPON_NORM = {norm(n): n for n in WEAPONS}
 _WEAPON_NORM.update({norm(k): v for k, v in ALIASES.items()})
@@ -237,11 +303,14 @@ def reload_db():
     _WEAPON_NORM.clear()
     _WEAPON_NORM.update({norm(n): n for n in WEAPONS})
     _WEAPON_NORM.update({norm(k): v for k, v in ALIASES.items()})
-    log.info("База перечитана: %d пушек, %d обвесов", len(WEAPONS), len(ATTS))
+    _TTK_CACHE.clear()
+    log.info("База перечитана: %d пушек, %d обвесов, баллистика от %s", len(WEAPONS), len(ATTS),
+             BALL.get("generatedAt"))
     return len(WEAPONS), len(ATTS)
 
 
-def match_weapon(text):
+def match_weapon(text, quiet=False):
+    """Название из игры → пушка из базы. quiet — не жаловаться в журнал (будет ещё попытка прочитать)."""
     if not text:
         return None
     n = norm(text)
@@ -256,6 +325,8 @@ def match_weapon(text):
     best = difflib.get_close_matches(n, _WEAPON_NORM.keys(), n=1, cutoff=0.75)
     if best:
         return _WEAPON_NORM[best[0]]
+    if quiet:
+        return None
     log.warning("Пушка не узнана: прочитано %r → %r (записал в unknown_names.txt)", text, n)
     ev(f"Не узнал пушку «{text}» — см. unknown_names.txt", "warn")
     with open(os.path.join(HERE, "unknown_names.txt"), "a", encoding="utf-8") as f:
@@ -278,12 +349,22 @@ BADGE_X = 0.38                     # ценник над иконкой: при 
                                    # (было 0.55 под «$0»; с деньгами ценник длиннее — «$540», «$1 250»)
 MAG_ICON_SURE = 0.75              # иконке магазина верим, если похожа хотя бы так (и с отрывом 0.15)
 HOLD_MIN = 0.40                  # под курсором: оставить уже узнанный обвес, если похож хотя бы так
+CURSOR_BRIGHT = 110              # …и если в ячейке есть яркие точки (курсор); у пустого слота с силуэтом их нет (~88)
 ICON_BOX = (96, 84)                # рамка, в которую игра вписывает иконку (ширина, высота) при 1080p
+# Вкладка «Боеприпасы» (эталон 1920×1080): ячейка «ШАГ 1» — магазин, «ШАГ 2» — коробка патронов
+AMMO_MAG_SLOT = (157, 477, 268, 588)
+AMMO_BOX_SLOT = (594, 476, 712, 589)
+AMMO_SLOT_MIN = 0.6                # иконке магазина / патронов верим, если похожа хотя бы так (и с отрывом)
+AMMO_COVERED = 0.2                 # ниже — ячейка патронов пустая; выше (но не узнана) — коробку что-то закрыло
+AMMO_CHOICE = {}                   # пушка → патроны, выбранные на вкладке «Боеприпасы» (до закрытия программы)
+
 
 
 # Какие типы обвесов встают в одну ячейку
 SLOT_GROUP = {"Muzzle": "muzzle", "Suppressor": "muzzle", "Foregrip": "grip", "Bipod": "grip",
               "Optic": "optic", "Magazine": "mag", "Ammunition": "mag"}
+
+
 CACHE_FILE = os.path.join(HERE, "recognition_cache.json")
 CACHE_VERSION = f"1|{ICON_SIZES}|{len(ICONS)}|{len(ATTS)}"  # поменялась база/иконки — память сбрасывается
 
@@ -298,7 +379,7 @@ class Recognizer:
         from rapidocr_onnxruntime import RapidOCR
         self.ocr = RapidOCR()
         self.threshold = threshold
-        ref = read_rgb(os.path.join(HERE, "ref_moduli.png")).astype(np.float32)
+        ref = read_rgb(os.path.join(BUNDLE, "ref_moduli.png")).astype(np.float32)
         self.header_ref = ref
         self._tpl_cache = {}
         self.last_top = []
@@ -307,6 +388,7 @@ class Recognizer:
         self._mag_icon_cache = {}    # отпечаток ячейки магазина → (магазин по иконке, точность, отрыв)
         self._ocr_session = {}       # прочитанный текст за этот запуск (и неудачные попытки тоже)
         self._miss = set()          # ячейки, где ничего не нашлось (только до закрытия программы)
+        self._miss_score = {}       # …и насколько они всё же были похожи (вкладка «Боеприпасы»)
         # Память, которая сохраняется на диск:
         #   slots      — отпечаток ячейки → обвес
         #   ocr        — отпечаток надписи → текст
@@ -344,7 +426,7 @@ class Recognizer:
     def templates(self, name):
         if name in self._tpl_cache:
             return self._tpl_cache[name]
-        path = os.path.join(HERE, "icons", ICONS[name] + ".webp")
+        path = os.path.join(HERE, "icons", (ICONS.get(name) or round_icon_file(name)) + ".webp")
         ic = read_rgba(path)
         # Игра вписывает иконку в рамку ~96×84 С СОХРАНЕНИЕМ пропорций: квадратные → 84×84,
         # длинные прицелы (200×144, 232×132…) → ~96×69. Сплющивать в квадрат нельзя — не узнаются.
@@ -417,6 +499,48 @@ class Recognizer:
         self.last_top = top
         return (top[0][1], top[0][0]) if top else (-1.0, None)
 
+    def _slot_pick(self, img, box, names, what, weapon):
+        """Что лежит в ячейке box (x0, y0, x1, y1 эталона): (название или None, точность). Запоминает по картинке."""
+        x0, y0, x1, y1 = box
+        region = img[y0 - 6: y1 + 6, x0 - 6: x1 + 6].astype(np.float32)
+        if region.std() < 6 or not names:
+            return None, 0.0
+        key = f"{what}|{weapon}|{img_hash(region)}"
+        if key in self.mem["slots"]:
+            return self.mem["slots"][key], 1.0
+        if key in self._miss:
+            return None, self._miss_score.get(key, 0.0)
+        t = time.time()
+        best, name = self.best_match(region, names)
+        log.debug("%s, %s: лучшие %s за %.2f с", weapon, what,
+                  ", ".join(f"{n} {s:.3f}" for n, s in self.last_top), time.time() - t)
+        second = self.last_top[1][1] if len(self.last_top) > 1 else 0.0
+        if name and best >= AMMO_SLOT_MIN and best - second >= 0.05:
+            self.remember("slots", key, name)
+            log.info("%s, %s: %s (точность %.3f, второе место %.3f)", weapon, what, name, best, second)
+            return name, best
+        log.info("%s, %s: не узнал (лучшее %s %.3f, второе %.3f)", weapon, what, name, best, second)
+        self._miss.add(key)
+        self._miss_score[key] = best
+        return None, best
+
+    def analyze_ammo(self, img, weapon):
+        """Вкладка «Боеприпасы»: какой магазин выбран (шаг 1) и какие патроны (шаг 2)."""
+        mags = [n for n, a in ATTS.items() if weapon in a[3] and a[1] in MAG_TYPES and n in ICONS]
+        mag, _ = self._slot_pick(img, AMMO_MAG_SLOT, mags, "магазин (шаг 1)", weapon)
+        rounds = round_icons(weapon)
+        box, score = self._slot_pick(img, AMMO_BOX_SLOT, list(rounds.values()), "патроны (шаг 2)", weapon)
+        ammo = next((r for r, n in rounds.items() if n == box), None)
+        if ammo:
+            AMMO_CHOICE[weapon] = ammo      # TTK на вкладке «Модули» дальше считаем с этими патронами
+        elif score >= AMMO_COVERED and weapon in AMMO_CHOICE:
+            # коробку частично закрыла подсказка или курсор (пустая ячейка похожа ≤0.14, закрытая ~0.29) —
+            # оставляем патроны, что были, иначе плашка мигает, пока водишь мышью
+            ammo = AMMO_CHOICE[weapon]
+            log.debug("%s: коробка патронов закрыта (%.3f) — оставляю %s", weapon, score, ammo)
+        self.save()
+        return {"weapon": weapon, "attachments": [mag] if mag else [], "tab": "ammo", "ammo": ammo}
+
     def find_header(self, img, min_score=0.8):
         """Ищем «МОДУЛИ» — значит открыто меню сборки. Возвращает сдвиг по вертикали или None."""
         x, y = HEADER_POS
@@ -427,11 +551,14 @@ class Recognizer:
             return None
         return (max(0, y - 40) + loc[1]) - y
 
-    def analyze(self, img, native=None):
+    def analyze(self, img, native=None, mode="modules"):
         """img — эталонный кадр 1920×1080. native — (исходный кадр, s, x, y надписи): оттуда читаем
         текст в родном разрешении, мелкие цифры «30/30» после пересчёта размываются.
-        Возвращает {'weapon':..., 'attachments':[...]} или None."""
-        if native is not None:
+        mode — вкладка: "modules" (обвесы) или "ammo" (магазин и патроны).
+        Возвращает {'weapon':..., 'attachments':[...]} (на вкладке патронов ещё 'tab' и 'ammo') или None."""
+        if mode in ("ammo", "ammo_simple"):
+            dy = 0          # заголовка «МОДУЛИ» тут нет; меню уже точно вписал Locator
+        elif native is not None:
             # меню уже нашёл Locator по двум надписям и вписал заголовок ровно на место —
             # здесь только уточняем сдвиг; курсор мыши на надписи не должен всё отменять
             dy = self.find_header(img, 0.4)
@@ -460,7 +587,8 @@ class Recognizer:
             return float(px[0]) - float(px[2])   # «теплота»: красный минус синий
 
         def selected(cx):
-            button = warm(MODULES_BTN[1] - 4, MODULES_BTN[1] + 4, cx + MODULES_BTN[0] - 4, cx + MODULES_BTN[0] + 4)
+            btn = MODULES_BTN if mode == "modules" else (AMMO_BTN[0] - CARD_X[0], AMMO_BTN[1])   # оранжевая кнопка
+            button = warm(btn[1] - 4, btn[1] + 4, cx + btn[0] - 4, cx + btn[0] + 4)
             frame = (warm(179, 182, cx + 20, cx + 300) + warm(200, 330, cx, cx + 3)) / 2
             return button + 3 * frame
         scores = {cx: selected(cx) for cx in CARD_X}
@@ -468,19 +596,43 @@ class Recognizer:
 
         x0, y0, x1, y1 = CARD_NAME
         weapon_text, wkey = text(card + x0, y0, card + x1, y1, 2)
-        weapon = match_weapon(weapon_text)
+        weapon = match_weapon(weapon_text, quiet=native is not None)
+        if not weapon and native is not None and wkey not in self._miss:
+            # мелко (игра в маленьком окне): «M4» читается как «ME» — перечитываем крупнее
+            crop = native_crop(card + x0, y0, card + x1, y1, margin=2)
+            for zoom in (5, 7, 9):
+                big = cv2.copyMakeBorder(cv2.resize(crop, None, fx=zoom, fy=zoom, interpolation=cv2.INTER_CUBIC),
+                                         12, 12, 12, 12, cv2.BORDER_REPLICATE)
+                res, _ = self.ocr(big)
+                again = " ".join(r[1] for r in res) if res else ""
+                weapon = match_weapon(again, quiet=True)
+                log.debug("Пушка: перечитал крупнее (×%d): %r → %s", zoom, again, weapon)
+                if weapon:
+                    weapon_text = again
+                    break
+            if not weapon:
+                self._miss.add(wkey)              # на этой же картинке больше не пробуем
+                match_weapon(weapon_text)         # теперь — с записью в журнал и unknown_names.txt
         if not weapon:
             return {"weapon": None, "attachments": [], "raw": weapon_text}
         if wkey not in self.mem["ocr"]:
             log.info("Пушка: прочитано %r → %s (карточка %d; выбранность карточек: %s)", weapon_text, weapon,
                      CARD_X.index(card) + 1, [round(scores[c]) for c in CARD_X])
         self.remember("ocr", wkey, weapon_text)
+        has_mags = any(weapon in a[3] and a[1] in MAG_TYPES for a in ATTS.values())
+        if mode == "ammo" or (mode == "ammo_simple" and has_mags):
+            # (у пушки с магазином «без шагов» бывает, когда курсор закрыл рамку «ШАГ 1» — ячейки всё равно смотрим)
+            return self.analyze_ammo(img, weapon)
+        if mode == "ammo_simple":   # лук, Mosin: магазина нет — патроны те, что видели в ячейке на «Модулях»
+            return {"weapon": weapon, "attachments": [], "tab": "ammo", "ammo": AMMO_CHOICE.get(weapon)}
 
         cands = [n for n, a in ATTS.items() if weapon in a[3] and n in ICONS]
         types = self.mem["slot_types"].setdefault(weapon, {})
         mag_cands = [n for n in cands if ATTS[n][1] in MAG_TYPES]
         mag_icon = None               # (магазин по иконке, точность, отрыв от второго магазина)
         found = []
+        rounds = round_icons(weapon)  # коробки патронов: у Mosin, SV98 и т.п. они стоят прямо в ячейке магазина
+        slot_ammo = None
         n_slots = int((ROW_RIGHT - SLOT_X0 - SLOT_W) // SLOT_STEP) + 1
         for i in range(n_slots):
             sx = int(SLOT_X0 + i * SLOT_STEP)
@@ -494,6 +646,9 @@ class Recognizer:
                 mag_icon = self.mag_icon(key, region, mag_cands)
                 continue
             name = self.mem["slots"].get(key) or self._hold.get(key)
+            if name and name.startswith("AMMO|"):   # в ячейке коробка патронов
+                slot_ammo = name.split("|")[2]
+                continue
             if name:                  # эту ячейку уже видели — ответ мгновенный
                 if key in self.mem["slots"]:
                     self._slot_last[(weapon, i)] = name
@@ -517,6 +672,15 @@ class Recognizer:
             log.debug("%s, ячейка %d: искал %s; лучшие: %s; за %.2f с", weapon, i + 1, how,
                       ", ".join(f"{n} {s:.3f}" for n, s in self.last_top), time.time() - t_slot)
 
+            if best < self.threshold and rounds:
+                top = self.last_top
+                s_r, n_r = self.best_match(region, list(rounds.values()))
+                if s_r >= AMMO_SLOT_MIN:
+                    slot_ammo = n_r.split("|")[2]
+                    self.remember("slots", key, n_r)
+                    log.info("%s, ячейка %d: коробка патронов %s (точность %.3f)", weapon, i + 1, slot_ammo, s_r)
+                    continue
+                self.last_top = top
             second = f"{self.last_top[1][0]} {self.last_top[1][1]:.3f}" if len(self.last_top) > 1 else "—"
             if best_name and ATTS[best_name][1] in MAG_TYPES:
                 if i == 0 and best >= 0.4:   # магазин у всех пушек в первой ячейке (с меткой «1»)
@@ -536,9 +700,11 @@ class Recognizer:
                 log.info("%s, ячейка %d: %s (точность %.3f, второе место: %s)", weapon, i + 1, best_name, best, second)
                 if best_name not in found:
                     found.append(best_name)
-            elif self._holds(weapon, i, best_name, best):
+            elif self._holds(weapon, i, best_name, best) and np.percentile(region.mean(2), 99) >= CURSOR_BRIGHT:
                 # иконку частично закрывает курсор мыши: это тот же обвес, что был в ячейке только что,
-                # и он всё ещё самый похожий — оставляем (иначе плашка мигает, пока водишь мышью)
+                # и он всё ещё самый похожий — оставляем (иначе плашка мигает, пока водишь мышью).
+                # Только если курсор правда есть (яркая стрелка): пустой слот с серым силуэтом рукояти похож
+                # на RVG (~0.5–0.66), но в нём нет ни одной яркой точки — его не держим (отзыв в Steam 29.10).
                 self._hold[key] = best_name
                 log.info("%s, ячейка %d: %s частично закрыт (точность %.3f) — оставляю, он тут уже был",
                          weapon, i + 1, best_name, best)
@@ -618,8 +784,16 @@ class Recognizer:
             else:
                 log.warning("Магазин не определён: прочитано %r, у пушки бывают: %s", cap_text, sorted(mags))
 
+        if slot_ammo:
+            AMMO_CHOICE[weapon] = slot_ammo
+        elif not size and not (mag_icon and mag_icon[1] >= 0.5) and weapon in AMMO_CHOICE:
+            # магазин сняли — патронов, выбранных раньше на вкладке «Боеприпасы», больше нет
+            log.info("%s: магазина нет — забываю патроны %s", weapon, AMMO_CHOICE.pop(weapon))
         self.save()
-        return {"weapon": weapon, "attachments": found}
+        out = {"weapon": weapon, "attachments": found}
+        if AMMO_CHOICE.get(weapon):   # патроны (из ячейки или с вкладки «Боеприпасы») — для TTK и строки на плашке
+            out["ammo"] = AMMO_CHOICE[weapon]
+        return out
 
 
 # ---------------------------------------------------------------- где на экране меню
@@ -633,6 +807,15 @@ CELLS_OFFSET = (-2, -314)   # где «ЯЧЕЙКИ ДЛЯ ЭКИПИРОВКИ�
 HEADER_MIN = 0.6            # «МОДУЛИ» похоже хотя бы так
 LABEL_MIN = 0.5             # «ЯЧЕЙКИ ДЛЯ ЭКИПИРОВКИ» похоже хотя бы так
 PAIR_MIN = 1.25             # и в сумме не меньше (1080p: ~1.9; друг на 1440p: заголовок ~0.72)
+# Вкладка «Боеприпасы»: вместо заголовка «МОДУЛИ» на том же месте рамка «// ШАГ 1: ВЫБРАТЬ МАГАЗИН»
+# (на 19 снимках вкладки ≥0.995, на остальных ≤0.55). Всё остальное меню — там же, где у «Модулей».
+AMMO_OFFSET = (0, -6)       # где рамка относительно места заголовка «МОДУЛИ» (в эталоне)
+AMMO_MIN = 0.7
+# Вкладка «Боеприпасы» у лука и Mosin (нет шагов «магазин + патроны»): опора — «ЯЧЕЙКИ ДЛЯ ЭКИПИРОВКИ»
+# (должна совпасть очень точно) и оранжевая кнопка «БОЕПРИПАСЫ» под карточкой (центр кнопки, эталон).
+SIMPLE_MIN = 0.85
+AMMO_BTN = (233, 372)
+TAB_RU = {"modules": "Модули", "ammo": "Боеприпасы", "ammo_simple": "Боеприпасы"}
 
 
 def _gray(rgb):
@@ -643,14 +826,76 @@ class Locator:
     """Находит меню «Модули» на кадре. Место = (масштаб s, x, y надписи на экране)."""
 
     def __init__(self):
-        ref = read_rgb(os.path.join(HERE, "ref_moduli.png"))
+        ref = read_rgb(os.path.join(BUNDLE, "ref_moduli.png"))
         self.ref = _gray(ref).astype(np.float32)
         self.ref_small = cv2.resize(self.ref, None, fx=COARSE, fy=COARSE, interpolation=cv2.INTER_AREA)
         # вторая опора: «ЯЧЕЙКИ ДЛЯ ЭКИПИРОВКИ» над заголовком (у кнопок «МОДУЛИ» её нет)
-        cells = read_rgb(os.path.join(HERE, "ref_cells.png"))
+        cells = read_rgb(os.path.join(BUNDLE, "ref_cells.png"))
         self.cells = _gray(cells).astype(np.float32)
+        self.ammo = _gray(read_rgb(os.path.join(BUNDLE, "ref_ammo.png"))).astype(np.float32)
+        self.ammo_small = cv2.resize(self.ammo, None, fx=COARSE, fy=COARSE, interpolation=cv2.INTER_AREA)
+        self.cells_small = cv2.resize(self.cells, None, fx=COARSE, fy=COARSE, interpolation=cv2.INTER_AREA)
+        self.mode = "modules"       # какая вкладка нашлась последней: "modules" или "ammo"
         self.near = None
         self.coarse = (-1.0, None)
+
+    def check_ammo(self, frame_gray, s, hx, hy, wide=False):
+        """Вкладка «Боеприпасы» в этом месте? (hx, hy — где был бы заголовок «МОДУЛИ»).
+        → (точность, s, hx, hy) в тех же координатах, что и у «Модулей», или None."""
+        th, tw = self.ammo.shape
+        ax, ay = hx + AMMO_OFFSET[0] * s, hy + AMMO_OFFSET[1] * s
+        pad = int((14 if wide else 8) * s) + 2
+        x0, y0 = max(0, int(ax) - pad), max(0, int(ay) - pad)
+        x1 = min(frame_gray.shape[1], int(ax + tw * s * 1.07) + pad)
+        y1 = min(frame_gray.shape[0], int(ay + th * s * 1.07) + pad)
+        crop = frame_gray[y0:y1, x0:x1]
+        if crop.size == 0:
+            return None
+        best = None
+        for k in ((0.94, 0.96, 0.98, 1.0, 1.02, 1.04, 1.06) if wide else (0.98, 1.0, 1.02)):
+            ss = s * k
+            c = cv2.resize(crop, None, fx=1 / ss, fy=1 / ss,
+                           interpolation=cv2.INTER_AREA if ss > 1 else cv2.INTER_CUBIC).astype(np.float32)
+            if c.shape[0] < th or c.shape[1] < tw:
+                continue
+            _, score, _, loc = cv2.minMaxLoc(cv2.matchTemplate(c, self.ammo, cv2.TM_CCOEFF_NORMED))
+            if best is None or score > best[0]:
+                best = (score, ss, x0 + loc[0] * ss - AMMO_OFFSET[0] * ss, y0 + loc[1] * ss - AMMO_OFFSET[1] * ss)
+        if not best or best[0] < AMMO_MIN:
+            return None
+        label = self.confirm(frame_gray, *best[1:])
+        if label < LABEL_MIN or best[0] + label < PAIR_MIN:
+            return None
+        return ((best[0] + label) / 2,) + best[1:]
+
+    def check_simple(self, frame_gray, s, hx, hy, frame_rgb):
+        """Вкладка «Боеприпасы» без шагов (лук, Mosin — магазина нет): только «ЯЧЕЙКИ ДЛЯ ЭКИПИРОВКИ»
+        и оранжевая кнопка «БОЕПРИПАСЫ» под одной из карточек. → (точность, s, hx, hy) или None."""
+        label = self.confirm(frame_gray, s, hx, hy)
+        if label < SIMPLE_MIN or frame_rgb is None:
+            return None
+        for card in CARD_X:
+            bx = hx + (AMMO_BTN[0] + card - CARD_X[0] - HEADER_POS[0]) * s
+            by = hy + (AMMO_BTN[1] - HEADER_POS[1]) * s
+            px = frame_rgb[max(0, int(by - 4 * s)): int(by + 4 * s) + 1, max(0, int(bx - 6 * s)): int(bx + 6 * s) + 1]
+            if px.size and float(px[..., 0].mean()) - float(px[..., 2].mean()) >= 80:
+                return (label, s, hx, hy)
+        return None
+
+    def check_any(self, frame_gray, s, hx, hy, frame_rgb=None):
+        """Меню там же, где было? «Модули», «Боеприпасы», «Боеприпасы» без шагов (запоминает, какая вкладка)."""
+        hit = self.check(frame_gray, s, hx, hy)
+        if hit:
+            self.mode = "modules"
+            return hit
+        hit = self.check_ammo(frame_gray, s, hx, hy)
+        if hit:
+            self.mode = "ammo"
+            return hit
+        hit = self.check_simple(frame_gray, s, hx, hy, frame_rgb)
+        if hit:
+            self.mode = "ammo_simple"
+        return hit
 
     def confirm(self, frame_gray, s, hx, hy):
         """Есть ли «ЯЧЕЙКИ ДЛЯ ЭКИПИРОВКИ» там, где она должна быть относительно заголовка."""
@@ -706,7 +951,7 @@ class Locator:
             return ((best[0] + label) / 2,) + best[1:]   # (точность, s, x, y)
         return None
 
-    def search(self, frame_gray, scales):
+    def search(self, frame_gray, scales, frame_rgb=None):
         """Ищем надпись по всему кадру в нескольких масштабах.
         Слово «МОДУЛИ» есть ещё и на кнопках под карточками — поэтому берём самое точное совпадение."""
         best = None
@@ -737,7 +982,53 @@ class Locator:
                 r[max(0, loc[1] - 3): loc[1] + 4, max(0, loc[0] - 6): loc[0] + 7] = -1
             if best and best[0] >= 0.8:   # обе надписи уверенно на месте — дальше не ищем
                 break
-        return best[1:] if best else None
+        if best:
+            self.mode = "modules"
+            return best[1:]
+        # «Модулей» нет — может, открыта вкладка «Боеприпасы»
+        for s in scales:
+            f = COARSE / s
+            src, rel = (base, f / b) if f / b <= 1 else (frame_gray, f)
+            small = cv2.resize(src, None, fx=rel, fy=rel, interpolation=cv2.INTER_AREA).astype(np.float32)
+            if small.shape[0] < self.ammo_small.shape[0] or small.shape[1] < self.ammo_small.shape[1]:
+                continue
+            r = np.nan_to_num(cv2.matchTemplate(small, self.ammo_small, cv2.TM_CCOEFF_NORMED), nan=-1)
+            for _ in range(3):
+                _, score, _, loc = cv2.minMaxLoc(r)
+                if score < 0.55:
+                    break
+                hit = self.check_ammo(frame_gray, s, loc[0] / f - AMMO_OFFSET[0] * s,
+                                      loc[1] / f - AMMO_OFFSET[1] * s, wide=True)
+                if hit and (best is None or hit[0] > best[0]):
+                    best = hit
+                r[max(0, loc[1] - 3): loc[1] + 4, max(0, loc[0] - 6): loc[0] + 7] = -1
+            if best and best[0] >= 0.8:
+                break
+        if best:
+            self.mode = "ammo"
+            return best[1:]
+        # и не она — может, «Боеприпасы» без шагов (лук, Mosin): ищем «ЯЧЕЙКИ ДЛЯ ЭКИПИРОВКИ»
+        if frame_rgb is not None:
+            for s in scales:
+                f = COARSE / s
+                src, rel = (base, f / b) if f / b <= 1 else (frame_gray, f)
+                small = cv2.resize(src, None, fx=rel, fy=rel, interpolation=cv2.INTER_AREA).astype(np.float32)
+                if small.shape[0] < self.cells_small.shape[0] or small.shape[1] < self.cells_small.shape[1]:
+                    continue
+                r = np.nan_to_num(cv2.matchTemplate(small, self.cells_small, cv2.TM_CCOEFF_NORMED), nan=-1)
+                for _ in range(2):
+                    _, score, _, loc = cv2.minMaxLoc(r)
+                    if score < 0.6:
+                        break
+                    hit = self.check_simple(frame_gray, s, loc[0] / f - CELLS_OFFSET[0] * s,
+                                            loc[1] / f - CELLS_OFFSET[1] * s, frame_rgb)
+                    if hit and (best is None or hit[0] > best[0]):
+                        best = hit
+                    r[max(0, loc[1] - 3): loc[1] + 4, max(0, loc[0] - 6): loc[0] + 7] = -1
+                if best:
+                    self.mode = "ammo_simple"
+                    return best[1:]
+        return None
 
 
 def to_reference(frame, s, hx, hy):
@@ -800,10 +1091,9 @@ def _sec(x):
     return f"{x:.2f}".replace(".", ",")
 
 
-def compute_rows(att_names, weapon=None):
-    """Строки плашки: (подпись, что лучше, множитель, своё значение справа или None).
-    Время прицеливания — в секундах: у пушки в базе есть родное время (AK74 — 0.45 с),
-    обвесы его умножают. Для остальных статов родных секунд в базе нет — остаются проценты."""
+def stat_totals(att_names, weapon=None):
+    """Во сколько раз обвесы меняют каждый стат: ({стат: множитель}, родное время прицеливания или None).
+    Время прицеливания у пушки в базе есть в секундах (AK74 — 0.45 с), обвесы его умножают."""
     base_ads = None
     w = WEAPONS.get(weapon) if weapon else None
     if w and w[5]:
@@ -813,6 +1103,8 @@ def compute_rows(att_names, weapon=None):
     # Итог как в игре: (родное или заменённое + прибавки) × множители.
     mult, over, add = {}, {}, {}
     for n in att_names:
+        if n not in ATTS:
+            continue
         for e in ATTS[n][2]:
             attr, v, op = e[0], float(e[1]), (e[2] if len(e) > 2 else "x")
             if op == "=":
@@ -826,6 +1118,13 @@ def compute_rows(att_names, weapon=None):
         base = base_ads if (attr == "ADS time" and base_ads) else 1.0
         value = (over.get(attr, base) + add.get(attr, 0.0)) * mult.get(attr, 1.0)
         total[attr] = value / base          # во сколько раз изменилось относительно пушки без обвесов
+    return total, base_ads
+
+
+def compute_rows(att_names, weapon=None):
+    """Строки плашки: (подпись, что лучше, множитель, своё значение справа или None).
+    Время прицеливания — в секундах; для остальных статов родных чисел в базе нет — проценты."""
+    total, base_ads = stat_totals(att_names, weapon)
     rows = []
     for key, ru, better in STATS:
         if key in total and abs(total[key] - 1) >= 0.005:
@@ -837,6 +1136,102 @@ def compute_rows(att_names, weapon=None):
                 value = f"{'+' if diff > 0 else '−' if diff < 0 else '±'}{_sec(abs(diff))} с"
             rows.append((ru, better, total[key], value))
     return rows[:MAX_ROWS]
+
+
+def stat_text(key, m, base_ads):
+    """Как показать итог стата: «−31%», «0,38 с», «1.5×», «±0%». Зума нет в базе — «—»."""
+    if key == "ADS zoom":
+        return "—" if m is None else f"{m:.1f}×".replace(".0×", "×")
+    if key == "ADS time" and base_ads:
+        return f"{_sec(base_ads * m)} с"
+    pct = round((m - 1) * 100)
+    return f"{'+' if pct > 0 else '−' if pct < 0 else '±'}{abs(pct)}%"
+
+
+def compute_compare(old, new, weapon=None):
+    """Сравнение двух сборок одной пушки: [(подпись, было, станет, итог)], итог: 1 — лучше, −1 — хуже, 0 — так же.
+    Показываем статы, которые хоть в одной из сборок отличаются от голой пушки."""
+    t_old, base_ads = stat_totals(old, weapon)
+    t_new, _ = stat_totals(new, weapon)
+    rows = []
+    for key, ru, better in STATS:
+        a, b = t_old.get(key, 1.0), t_new.get(key, 1.0)
+        if abs(a - 1) < 0.005 and abs(b - 1) < 0.005:
+            continue
+        if key == "ADS zoom":   # зум задаёт прицел; у некоторых (Spectr 4x) в базе его нет — не «1×», а «—»
+            a, b = t_old.get(key), t_new.get(key)
+        was, now = stat_text(key, a, base_ads), stat_text(key, b, base_ads)
+        if better is None or was == now:
+            verdict = 0
+        else:
+            verdict = 1 if (b < a) == (better == "low") else -1
+        rows.append(("Прицеливание" if key == "ADS time" and base_ads else ru, was, now, verdict))
+    return rows[:MAX_ROWS + 2]
+
+
+def compare_view(state):
+    """Сравнение с запомненной сборкой (Ctrl+Shift+S). Возвращает (было, сейчас, ушло, пришло)
+    или None — сборка не запомнена или не изменилась."""
+    if not state or not state.get("weapon"):
+        return None
+    cur = list(state.get("attachments") or [])
+    saved = state.get("saved")
+    if saved is None or sorted(saved) == sorted(cur):
+        return None
+    return list(saved), cur, [n for n in saved if n not in cur], [n for n in cur if n not in saved]
+
+
+# ---------------------------------------------------------------- TTK
+TTK_DIST = 50                      # дистанция для TTK на плашке, м (как по умолчанию у MetaForge)
+TTK_COLS = ((0, "БЕЗ БРОНИ"), (1, "БРОНЯ 1"), (2, "БРОНЯ 2"), (3, "БРОНЯ 3"), (4, "БРОНЯ 4"))
+TTK_ROWS = (("torso_upper", "Тело"), ("head", "Голова"))
+AMMO_RU = {"FMJ": "обычные (FMJ)", "HollowPoint": "экспансивные (HP)", "ArmorPiercing": "бронебойные (AP)"}
+AMMO_SHORT = {"FMJ": "Обычные", "HollowPoint": "HP", "ArmorPiercing": "AP"}
+AMMO_NOTE = {"FMJ": "ровный урон по всем целям",
+             "HollowPoint": "больше урона по телу, намного хуже по броне",
+             "ArmorPiercing": "лучше по броне, чуть меньше урона без неё"}
+_TTK_CACHE = {}
+
+
+def ttk_cells(weapon, rnd, hit):
+    """[(выстрелов, секунд) по колонкам TTK_COLS] или None — нет баллистики для этой пушки."""
+    key = (weapon, rnd, hit)
+    if key not in _TTK_CACHE:
+        import ballistics
+        out = None
+        if BALL and ballistics.weapon(BALL, weapon):
+            out = []
+            for level, _ in TTK_COLS:
+                r = ballistics.ttk(BALL, weapon, rnd, level, hit, TTK_DIST)
+                out.append((r["shots"], round(r["ms"] / 1000, 2) if r["ms"] is not None else None) if r else (None, None))
+        _TTK_CACHE[key] = out
+    return _TTK_CACHE[key]
+
+
+def ttk_payload(weapon, tab=None, ammo=None):
+    """Что показать в блоке TTK: {"title", "cols", "rows": [[подпись, [[выстрелов, секунд], …], выбрано?], …]}.
+    «Модули» — тело и голова с выбранными патронами; «Боеприпасы» — в тело, все виды патронов (выбранные подсвечены)."""
+    import ballistics
+    t = time.time()
+    w = BALL and ballistics.weapon(BALL, weapon)
+    if not w:
+        log.debug("TTK %s: нет баллистики", weapon)
+        return None
+    cols = [name for _, name in TTK_COLS]
+    if tab == "ammo":
+        loads = ballistics.loads(BALL, w)
+        bow = "Bow" in (w.get("weaponClass") or "")
+        rows = [["Стрелы" if bow else AMMO_SHORT.get(r, r), ttk_cells(weapon, r, "torso_upper"), r == ammo]
+                for r in loads]
+        title = f"TTK в тело  ·  {TTK_DIST} м  ·  какие патроны лучше"
+    else:
+        rnd = ammo or "FMJ"
+        rows = [[label, ttk_cells(weapon, rnd, hit), False] for hit, label in TTK_ROWS]
+        title = f"TTK  ·  {TTK_DIST} м  ·  {AMMO_RU.get(rnd, rnd).split(' (')[0]} патроны"
+    out = {"title": title, "cols": cols, "rows": [[a, [list(c) for c in cells], sel] for a, cells, sel in rows if cells],
+           "best": tab == "ammo"}   # подсветить зелёным самые быстрые патроны в каждой колонке
+    log.debug("TTK %s (%s): %s — за %.0f мс", weapon, tab or "modules", out["rows"], (time.time() - t) * 1000)
+    return out if out["rows"] else None
 
 
 # ---------------------------------------------------------------- окно поверх игры
@@ -937,14 +1332,146 @@ class OverlayWindow:
         y += 26
         c.create_line(pad, y, W - pad, y, fill=LINE)
         y += 8
-        atts = [ATTS[n] for n in state.get("attachments", []) if n in ATTS]
-        if not atts:
+        view = compare_view(state) if state.get("tab") != "ammo" else None
+        if state.get("tab") == "ammo":
+            y = self._render_ammo(c, y, state)
+        elif view:
+            y = self._render_compare(c, y, state, view)
+        else:
+            y = self._render_plain(c, y, state)
+        c.config(height=y)
+        self.root.geometry(f"{W}x{y}+{self.x}+{self.y}")
+        if not self.shown:
+            self.root.deiconify()
+            self._click_through()
+            self.shown = True
+
+    def _render_atts(self, c, y, names, gone=(), came=()):
+        """Список обвесов. gone — уйдут (зачёркнуты), came — придут (оранжевым, со стрелкой)."""
+        W, pad = self.W, 16
+        if not names and not gone:
             c.create_text(pad, y, text="Без обвесов", fill=DIM, font=(FONT, 11), anchor="nw")
-            y += 22
-        for a in atts:
+            return y + 22
+        for n in list(names) + [g for g in gone if g not in names]:
+            a = ATTS.get(n)
+            if not a:
+                continue
+            if n in gone:
+                col, font, label = DIM, (FONT, 11, "overstrike"), a[0]
+            elif n in came:
+                col, font, label = ACCENT, (FONT, 11, "bold"), "→ " + a[0]
+            else:
+                col, font, label = TEXT, (FONT, 11), a[0]
             c.create_text(pad, y + 2, text=SLOT_RU.get(a[1], a[1]), fill=DIM, font=(FONT, 8), anchor="nw")
-            c.create_text(pad + 78, y, text=a[0], fill=TEXT, font=(FONT, 11), anchor="nw")
+            c.create_text(pad + 78, y, text=label, fill=col, font=font, anchor="nw", width=W - pad * 2 - 78)
             y += 22
+        return y
+
+    def _render_compare(self, c, y, state, view):
+        """Сравнение: «было → станет» по каждому стату, зелёным — что станет лучше, красным — хуже."""
+        W, pad = self.W, 16
+        old, new, gone, came = view
+        cur = list(state.get("attachments", []))
+        head, col_old, col_new = "С ЗАПОМНЕННОЙ СБОРКОЙ", "БЫЛО", "СЕЙЧАС"
+        y = self._render_atts(c, y, cur, gone, came)
+        y = self._render_ammo_line(c, y, state.get("ammo"))
+        y += 4
+        c.create_line(pad, y, W - pad, y, fill=LINE)
+        y += 8
+        c.create_text(pad, y, text=head, fill=ACCENT, font=(FONT, 8, "bold"), anchor="nw")
+        x_old, x_new = W - pad - 104, W - pad
+        c.create_text(x_old, y, text=col_old, fill=DIM, font=(FONT, 8), anchor="ne")
+        c.create_text(x_new, y, text=col_new, fill=DIM, font=(FONT, 8), anchor="ne")
+        y += 18
+        rows = compute_compare(old, new, state.get("weapon"))
+        if not rows:
+            c.create_text(pad, y, text="Обвесы не меняют статы", fill=DIM, font=(FONT, 11), anchor="nw")
+            y += 24
+        for label, was, now, verdict in rows:
+            col = GOOD if verdict > 0 else BAD if verdict < 0 else (DIM if was == now else TEXT)
+            c.create_text(pad, y, text=label, fill=TEXT if verdict else DIM, font=(FONT, 11), anchor="nw")
+            c.create_text(x_old, y, text=was, fill=DIM, font=(FONT, 11), anchor="ne")
+            c.create_text(x_old + 18, y, text="→", fill=DIM, font=(FONT, 11), anchor="nw")
+            c.create_text(x_new, y, text=now + (" ▲" if verdict > 0 else " ▼" if verdict < 0 else "  "),
+                          fill=col, font=(FONT, 11, "bold"), anchor="ne")
+            y += 24
+        y = self._render_ttk(c, y, state.get("ttk"))
+        y += 4
+        hint = f"{COMPARE_KEY['text']} — сбросить сравнение"
+        c.create_text(pad, y, text="Данные: metaforge.app  ·  " + hint, fill=DIM, font=(FONT, 7), anchor="nw")
+        return y + 18
+
+    def _render_ammo(self, c, y, state):
+        """Вкладка «Боеприпасы»: магазин, выбранные патроны и что они дают, TTK по видам патронов."""
+        W, pad = self.W, 16
+        weapon = state.get("weapon")
+        has_mags = any(weapon in a[3] and a[1] in MAG_TYPES for a in ATTS.values())
+        ttk = state.get("ttk") or {}
+        one_kind = len(ttk.get("rows") or []) <= 1      # лук, дробовик: патроны (стрелы) одного вида
+        y = self._render_atts(c, y, state.get("attachments", [])) if state.get("attachments") else y
+        if not state.get("attachments") and has_mags:
+            c.create_text(pad, y, text="Магазин ещё не выбран", fill=DIM, font=(FONT, 11), anchor="nw")
+            y += 22
+        ammo = state.get("ammo")
+        if ammo or not one_kind:
+            c.create_text(pad, y + 2, text="ПАТРОНЫ", fill=DIM, font=(FONT, 8), anchor="nw")
+            c.create_text(pad + 78, y, text=AMMO_RU.get(ammo, "ещё не выбраны"), fill=TEXT if ammo else DIM,
+                          font=(FONT, 11), anchor="nw")
+            y += 22
+        if ammo in AMMO_NOTE:
+            c.create_text(pad + 78, y - 2, text=AMMO_NOTE[ammo], fill=DIM, font=(FONT, 9), anchor="nw",
+                          width=W - pad * 2 - 78)
+            y += 18
+        y = self._render_ttk(c, y, state.get("ttk"))
+        y += 4
+        c.create_text(pad, y, text="Данные: metaforge.app", fill=DIM, font=(FONT, 7), anchor="nw")
+        return y + 18
+
+    def _render_ttk(self, c, y, ttk):
+        """Блок TTK: сколько попаданий и секунд до убийства (строки × без брони / броня 2 / броня 4).
+        Выбранная строка (патроны на вкладке «Боеприпасы») — оранжевая со стрелкой."""
+        if not ttk or not ttk.get("rows"):
+            return y
+        W, pad = self.W, 16
+        y += 2
+        c.create_line(pad, y, W - pad, y, fill=LINE)
+        y += 8
+        c.create_text(pad, y, text=ttk["title"], fill=ACCENT, font=(FONT, 8, "bold"), anchor="nw")
+        y += 16
+        # колонки (без брони, броня 1…4): крупно — сколько попаданий, под ним мелко — секунды
+        x0, col_w = 92, (W - pad - 92) / len(ttk["cols"])
+        for i, name in enumerate(ttk["cols"]):
+            c.create_text(x0 + col_w * (i + 0.5), y, text=name, fill=DIM, font=(FONT, 7), anchor="n")
+        y += 14
+        fastest = [min((r[1][i][1] for r in ttk["rows"] if r[1][i][1] is not None), default=None)
+                   for i in range(len(ttk["cols"]))]
+        for label, cells, chosen in ttk["rows"]:
+            c.create_text(pad, y + 6, text=("▶ " if chosen else "") + label, fill=ACCENT if chosen else TEXT,
+                          font=(FONT, 11, "bold" if chosen else "normal"), anchor="nw")
+            for i, (shots, secs) in enumerate(cells):
+                mid = x0 + col_w * (i + 0.5)
+                if shots is None:
+                    c.create_text(mid, y + 6, text="—", fill=DIM, font=(FONT, 11), anchor="n")
+                    continue
+                top = ttk.get("best") and secs == fastest[i]
+                c.create_text(mid, y, text=f"{shots}×", fill=GOOD if top else TEXT, font=(FONT, 12, "bold"), anchor="n")
+                c.create_text(mid, y + 19, text=f"{secs:.2f} с".replace(".", ","), fill=GOOD if top else DIM,
+                              font=(FONT, 8), anchor="n")
+            y += 36
+        return y
+
+    def _render_ammo_line(self, c, y, ammo):
+        """Строка «ПАТРОНЫ …» под обвесами (если патроны известны)."""
+        if ammo not in AMMO_RU:
+            return y
+        c.create_text(16, y + 2, text="ПАТРОНЫ", fill=DIM, font=(FONT, 8), anchor="nw")
+        c.create_text(16 + 78, y, text=AMMO_RU[ammo], fill=TEXT, font=(FONT, 11), anchor="nw")
+        return y + 22
+
+    def _render_plain(self, c, y, state):
+        W, pad = self.W, 16
+        y = self._render_atts(c, y, state.get("attachments", []))
+        y = self._render_ammo_line(c, y, state.get("ammo"))
         y += 4
         c.create_line(pad, y, W - pad, y, fill=LINE)
         y += 8
@@ -974,15 +1501,12 @@ class OverlayWindow:
                 c.create_text(W - pad, y, text=value or f"{sign}{abs(pct)}%", fill=col, font=(FONT, 11, "bold"),
                               anchor="ne")
             y += 24
+        y = self._render_ttk(c, y, state.get("ttk"))
         y += 4
-        c.create_text(pad, y, text="Данные: metaforge.app", fill=DIM, font=(FONT, 7), anchor="nw")
-        y += 18
-        c.config(height=y)
-        self.root.geometry(f"{W}x{y}+{self.x}+{self.y}")
-        if not self.shown:
-            self.root.deiconify()
-            self._click_through()
-            self.shown = True
+        hint = (f"сборка запомнена ({COMPARE_KEY['text']} — сбросить)" if state.get("saved") is not None
+                else f"{COMPARE_KEY['text']} — запомнить сборку для сравнения")
+        c.create_text(pad, y, text="Данные: metaforge.app  ·  " + hint, fill=DIM, font=(FONT, 7), anchor="nw")
+        return y + 18
 
 
 # ---------------------------------------------------------------- главный цикл
@@ -990,6 +1514,8 @@ PLACEMENT = {"pos": None}   # где сейчас должно стоять ок
 SCAN = {"active": threading.Event()}   # идёт ли поиск меню (иначе программа спит)
 STATUS = {"game": None, "menu": False, "shown": None}   # для строки состояния в консольном меню
 UI_MESSAGES = []            # короткие плашки для окна («поиск включён» и т.п.) — из других потоков
+SAVED = {}                  # пушка → запомненная сборка (для сравнения; до закрытия программы)
+COMPARE_KEY = {"text": "Ctrl+Shift+S"}   # клавиша «запомнить сборку» (из настроек)
 FULL_SEARCH_EVERY = 10.0    # раз в столько секунд — полный поиск по всем масштабам (0.3–0.5 с на 1080p–1440p)
 IDLE_INTERVAL = 1.0         # когда меню не видно — смотреть раз в секунду
 GAME_EXE = "wardogsclient"  # процесс игры: WardogsClient-Win64-Shipping.exe
@@ -1148,9 +1674,13 @@ def capture_loop(settings, rec, stop, fake=None):
                 else:
                     frame = grab(a)
                     if where:                         # быстро: меню там же, где было?
-                        hit = loc.check(_gray(frame), *where)
+                        was_mode = loc.mode
+                        hit = loc.check_any(_gray(frame), *where, frame_rgb=frame)
                         if hit:
                             found = hit[1:]
+                            if loc.mode != was_mode:
+                                log.info("Вкладка: %s", TAB_RU[loc.mode])
+                                ev(f"Открыта вкладка «{TAB_RU[loc.mode]}»", "dim")
                         else:
                             log.info("Меню «Модули» пропало")
                             ev("Меню «Модули» закрыто", "dim")
@@ -1165,12 +1695,12 @@ def capture_loop(settings, rec, stop, fake=None):
                         else:
                             scales = [last_scale] if last_scale else scales[:1]
                         t_search = time.time()
-                        found = loc.search(_gray(frame), scales)
+                        found = loc.search(_gray(frame), scales, frame)
                         if found:
-                            log.info("Меню «Модули» найдено: масштаб %.3f, надпись в (%d, %d) внутри снимка %dx%d; "
-                                     "поиск %s за %.2f с", found[0], found[1], found[2], w, h,
+                            log.info("Меню найдено (вкладка «%s»): масштаб %.3f, надпись в (%d, %d) внутри снимка "
+                                     "%dx%d; поиск %s за %.2f с", TAB_RU[loc.mode], found[0], found[1], found[2], w, h,
                                      "полный" if full else f"по масштабу {scales}", time.time() - t_search)
-                            ev("Меню «Модули» открыто", "ok")
+                            ev(f"Меню открыто — вкладка «{TAB_RU[loc.mode]}»", "ok")
                         elif full:
                             # чтобы по журналу было понятно, ПОЧЕМУ не нашлось: надпись совсем не похожа
                             # (другой язык / другое меню) или похожа, но не дотянула (масштаб, размытие)
@@ -1210,7 +1740,7 @@ def capture_loop(settings, rec, stop, fake=None):
                         log.debug("Плашка встанет в %s", pos)
                     PLACEMENT["pos"] = pos
                     t_an = time.time()
-                    state = rec.analyze(to_reference(frame, s, hx, hy), native=(frame, s, hx, hy))
+                    state = rec.analyze(to_reference(frame, s, hx, hy), native=(frame, s, hx, hy), mode=loc.mode)
                     if time.time() - t_an > 0.3:
                         log.debug("Распознавание кадра заняло %.2f с", time.time() - t_an)
                     stats["menu"] += 1
@@ -1241,11 +1771,9 @@ def capture_loop(settings, rec, stop, fake=None):
                 shown, candidate, cand_count = candidate, None, 0
                 st = json.loads(shown)
                 STATUS["shown"] = st
+                publish(st)
                 if st:
-                    server.set_state(st["weapon"], st["attachments"])
                     ev(describe_build(st), "ok")
-                else:
-                    server.set_state(None, [])
             if shown != last_print:
                 log.info("Показываю: %s", shown)
                 last_print = shown
@@ -1262,6 +1790,246 @@ def capture_loop(settings, rec, stop, fake=None):
                 last_beat, proc_cpu0 = time.time(), time.process_time()
             pause = settings["interval"] if where else max(settings["interval"], IDLE_INTERVAL)
             stop.wait(max(0.1, pause - (time.time() - t)))
+
+
+def _ver(text):
+    return tuple(int(x) for x in text.split("."))
+
+
+def check_update(on_new):
+    """В фоне: открыть руководство в Steam и найти там самую новую «Обновление X.Y». Новее нашей —
+    on_new(версия). Ничего не скачивает — только сообщает. Нет интернета — тихо пишет в журнал."""
+    def run():
+        import urllib.request
+        t = time.time()
+        try:
+            req = urllib.request.Request(GUIDE_URL, headers={"User-Agent": "Mozilla/5.0 WardogsOverlay/" + VERSION,
+                                                             "Accept-Language": "ru"})
+            html = urllib.request.urlopen(req, timeout=20).read().decode("utf-8", "replace")
+            found = sorted(set(re.findall(r"Обновление\s+(\d+(?:\.\d+)+)", html)), key=_ver)
+            log.info("Проверка обновлений: в руководстве версии %s, у меня %s (%.1f с)",
+                     found or "не нашёл", VERSION, time.time() - t)
+            if found and _ver(found[-1]) > _ver(VERSION):
+                ev(f"Вышла новая версия {found[-1]} — скачать по ссылке в руководстве Steam", "warn")
+                on_new(found[-1])
+        except Exception as e:
+            log.warning("Проверка обновлений не получилась (нет интернета?): %s", e)
+
+    threading.Thread(target=run, daemon=True, name="обновления").start()
+
+
+def update_db_now(rec):
+    """Скачать свежую базу с MetaForge и сразу начать ею пользоваться. → (получилось?, что сказать)."""
+    t = time.time()
+    ev("Обновляю базу с MetaForge…", "dim")
+    r = subprocess.run(updater_cmd(), cwd=HERE, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", creationflags=0x08000000)   # CREATE_NO_WINDOW
+    if r.returncode != 0:
+        log.error("Обновление базы не удалось (код %s): %s", r.returncode, (r.stdout or "")[-2000:])
+        ev("Обновить базу не получилось — старая не тронута", "err")
+        return False, "Не получилось — старая база не тронута. Подробности в update_database.log"
+    n_w, n_a = reload_db()
+    rec._tpl_cache.clear()
+    rec._miss.clear()
+    m = re.search(r"изменёнными статами: (\d+)", r.stdout or "")
+    changed = m.group(1) if m else "?"
+    log.info("База обновлена за %.1f с", time.time() - t)
+    ev(f"База обновлена: {n_w} пушек, {n_a} обвесов, изменено {changed}", "ok")
+    return True, f"{n_w} пушек, {n_a} обвесов, изменилось {changed}"
+
+
+MANUAL = "ИНСТРУКЦИЯ.txt"
+
+
+def open_manual():
+    """Открыть инструкцию (кнопка в настройках). Рядом с программой её нет (удалили) —
+    кладём туда копию, спрятанную внутри .exe."""
+    here = os.path.join(HERE, MANUAL)
+    try:
+        if not os.path.exists(here):
+            for src in (os.path.join(BUNDLE, MANUAL), os.path.join(os.path.dirname(HERE), MANUAL)):
+                if os.path.exists(src):
+                    if FROZEN:
+                        import shutil
+                        shutil.copyfile(src, here)
+                        log.info("Инструкции рядом не было — положил копию из программы")
+                    else:
+                        here = src            # обычный запуск: инструкция лежит в папке выше app
+                    break
+        log.info("Открываю инструкцию: %s", here)
+        os.startfile(here)
+    except OSError as e:
+        log.exception("Не смог открыть инструкцию")
+        message(f"Не смог открыть инструкцию: {e}")
+
+
+def settings_window(root, on_saved):
+    """Окно «Настройки» вместо Блокнота. Сохранить → on_saved() (программа перезапускается с новыми)."""
+    import tkinter as tk
+    from tkinter import ttk
+    s = load_settings()
+    top = tk.Toplevel(root)
+    top.title(f"Wardogs оверлей {VERSION} — настройки")
+    top.configure(bg=BG)
+    top.resizable(False, False)
+    top.attributes("-topmost", True)
+    try:
+        top.iconbitmap(ICON_FILE)
+    except Exception:
+        pass
+    st = ttk.Style(top)
+    st.theme_use("clam")
+    for w in ("TLabel", "TCheckbutton", "TRadiobutton"):
+        st.configure(w, background=BG, foreground=TEXT, font=(FONT, 11))
+        st.map(w, background=[("active", BG)], foreground=[("active", ACCENT)])
+    st.configure("TCheckbutton", indicatorbackground="#1c1f17", indicatorforeground=ACCENT, indicatormargin=(0, 0, 8, 0))
+    st.map("TCheckbutton", indicatorbackground=[("pressed", "#2a2e22"), ("selected", "#1c1f17")])
+    st.configure("Dim.TLabel", foreground=DIM, font=(FONT, 9))
+    st.configure("Head.TLabel", foreground=ACCENT, font=(FONT, 13, "bold"))
+    st.configure("Err.TLabel", foreground=BAD, font=(FONT, 10))
+    st.configure("TButton", font=(FONT, 11), padding=(14, 5))
+    st.configure("Go.TButton", font=(FONT, 11, "bold"), background=ACCENT, foreground="#111")
+    st.map("Go.TButton", background=[("active", "#f2b552")])
+    st.configure("TEntry", fieldbackground="#1c1f17", foreground=TEXT, insertcolor=TEXT)
+    st.map("TEntry", fieldbackground=[("readonly", "#1c1f17")], foreground=[("readonly", TEXT)])
+    st.configure("TSpinbox", fieldbackground="#1c1f17", foreground=TEXT, arrowcolor=TEXT)
+    st.configure("TCombobox", fieldbackground="#1c1f17", foreground=TEXT, arrowcolor=TEXT)
+    st.map("TCombobox", fieldbackground=[("readonly", "#1c1f17")], foreground=[("readonly", TEXT)])
+    st.configure("Horizontal.TScale", background=BG, troughcolor="#1c1f17")
+
+    bar = tk.Frame(top, bg=BG, padx=22)
+    bar.pack(fill="x", pady=(12, 0))
+    ttk.Label(bar, text=f"Версия {VERSION}", style="Dim.TLabel").pack(side="left")
+    ttk.Button(bar, text="📖  Инструкция", command=open_manual).pack(side="right")
+    f = tk.Frame(top, bg=BG, padx=22, pady=10)
+    f.pack(fill="both")
+    f.columnconfigure(1, weight=1)
+    row = [0]
+
+    def head(text):
+        ttk.Label(f, text=text, style="Head.TLabel").grid(row=row[0], column=0, columnspan=2, sticky="w",
+                                                          pady=(10 if row[0] else 0, 4))
+        row[0] += 1
+
+    def field(label, widget, hint=None):
+        ttk.Label(f, text=label).grid(row=row[0], column=0, sticky="w", padx=(0, 16), pady=3)
+        widget.grid(row=row[0], column=1, sticky="w", pady=3)
+        row[0] += 1
+        if hint:
+            ttk.Label(f, text=hint, style="Dim.TLabel").grid(row=row[0], column=1, sticky="w")
+            row[0] += 1
+
+    def check(text, var, hint=None):
+        ttk.Checkbutton(f, text=text, variable=var).grid(row=row[0], column=0, columnspan=2, sticky="w", pady=2)
+        row[0] += 1
+        if hint:
+            ttk.Label(f, text=hint, style="Dim.TLabel").grid(row=row[0], column=0, columnspan=2, sticky="w",
+                                                             padx=(26, 0))
+            row[0] += 1
+
+    head("Клавиши")
+    v_hotkey = tk.StringVar(value=s.get("hotkey", ""))
+    field("Включить / выключить поиск", ttk.Entry(f, textvariable=v_hotkey, width=22),
+          "Ctrl / Shift / Alt / Win + буква, цифра или F1–F12")
+    v_compare = tk.StringVar(value=s.get("compare_hotkey", ""))
+    field("Запомнить сборку (сравнение)", ttk.Entry(f, textvariable=v_compare, width=22))
+
+    head("Плашка")
+    v_show = tk.BooleanVar(value=bool(s.get("show_window", True)))
+    check("Показывать плашку поверх игры", v_show)
+    v_opacity = tk.DoubleVar(value=float(s.get("opacity", 0.92)))
+    op_text = tk.StringVar(value=f"{v_opacity.get() * 100:.0f}%")
+    op_box = tk.Frame(f, bg=BG)
+    ttk.Scale(op_box, from_=0.4, to=1.0, variable=v_opacity, length=170,
+              command=lambda _=None: op_text.set(f"{v_opacity.get() * 100:.0f}%")).pack(side="left")
+    ttk.Label(op_box, textvariable=op_text, width=5).pack(side="left", padx=8)
+    field("Непрозрачность", op_box)
+
+    head("Поиск меню")
+    mons = ["сам найдёт"] + [f"монитор {i}" for i in range(1, 5)]
+    mon = s.get("monitor")
+    v_mon = tk.StringVar(value=mons[mon] if isinstance(mon, int) and 1 <= mon <= 4 else mons[0])
+    field("Где игра", ttk.Combobox(f, textvariable=v_mon, values=mons, state="readonly", width=20))
+    v_off = tk.StringVar(value=str(s.get("auto_off_seconds", 10)))
+    field("Засыпать, если меню нет, через", ttk.Spinbox(f, from_=0, to=600, increment=5, textvariable=v_off,
+                                                        width=8), "секунд (0 — не засыпать)")
+
+    head("Разное")
+    v_obs = tk.BooleanVar(value=bool(s.get("obs_server", False)))
+    check("Плашка для OBS", v_obs, "В OBS: Источник «Браузер» → вставь этот адрес (1920×1080)")
+    obs_url = f"http://127.0.0.1:{server.PORT}/overlay.html"
+    url_box = tk.Frame(f, bg=BG)
+    url_var = top.url_var = tk.StringVar(value=obs_url)   # держим ссылку — иначе поле окажется пустым
+    ttk.Entry(url_box, textvariable=url_var, width=36, state="readonly").pack(side="left")
+    copied = tk.StringVar()
+
+    def copy_url():
+        top.clipboard_clear()
+        top.clipboard_append(obs_url)
+        copied.set("скопировано ✔")
+        log.info("Настройки: адрес для OBS скопирован")
+        top.after(2500, lambda: copied.set(""))
+
+    ttk.Button(url_box, text="Копировать", command=copy_url).pack(side="left", padx=8)
+    ttk.Label(url_box, textvariable=copied, style="Dim.TLabel").pack(side="left")
+    url_box.grid(row=row[0], column=0, columnspan=2, sticky="w", padx=(26, 0), pady=(2, 6))
+    row[0] += 1
+    v_upd = tk.BooleanVar(value=bool(s.get("check_updates", True)))
+    check("Сообщать о новой версии", v_upd, "При запуске смотрит руководство в Steam (ничего не скачивает)")
+    levels = {"подробно": "DEBUG", "главное": "INFO", "только проблемы": "WARNING"}
+    cur = next((k for k, v in levels.items() if v == str(s.get("log_level", "DEBUG")).upper()), "подробно")
+    v_log = tk.StringVar(value=cur)
+    field("Журнал overlay.log", ttk.Combobox(f, textvariable=v_log, values=list(levels), state="readonly",
+                                             width=20))
+
+    err = tk.StringVar()
+    ttk.Label(f, textvariable=err, style="Err.TLabel", wraplength=420).grid(row=row[0], column=0, columnspan=2,
+                                                                           sticky="w", pady=(10, 0))
+    row[0] += 1
+
+    def save():
+        for name, var in (("поиска", v_hotkey), ("сравнения", v_compare)):
+            try:
+                parse_hotkey(var.get())
+            except ValueError as e:
+                err.set(f"Клавиша {name} «{var.get()}» не подходит: {e}")
+                return
+        try:
+            off = int(float(v_off.get()))
+            if not 0 <= off <= 3600:
+                raise ValueError
+        except ValueError:
+            err.set("«Засыпать через» — число секунд от 0 до 3600")
+            return
+        changes = {"hotkey": v_hotkey.get().strip(), "compare_hotkey": v_compare.get().strip(),
+                   "show_window": v_show.get(), "opacity": round(v_opacity.get(), 2),
+                   "monitor": "auto" if v_mon.get() == mons[0] else mons.index(v_mon.get()),
+                   "auto_off_seconds": off, "obs_server": v_obs.get(), "check_updates": v_upd.get(),
+                   "log_level": levels[v_log.get()]}
+        try:
+            save_settings(changes)
+        except OSError as e:
+            log.exception("Не смог записать settings.json")
+            err.set(f"Не смог записать settings.json: {e}")
+            return
+        ev("Настройки изменены — перезапускаюсь", "ok")
+        top.destroy()
+        on_saved()
+
+    btns = tk.Frame(f, bg=BG)
+    btns.grid(row=row[0], column=0, columnspan=2, sticky="e", pady=(14, 0))
+    ttk.Button(btns, text="Отмена", command=top.destroy).pack(side="right")
+    ttk.Button(btns, text="Сохранить", style="Go.TButton", command=save).pack(side="right", padx=8)
+    top.bind("<Escape>", lambda e: top.destroy())
+    top.update_idletasks()
+    sw, sh = top.winfo_screenwidth(), top.winfo_screenheight()
+    top.geometry(f"+{(sw - top.winfo_width()) // 2}+{(sh - top.winfo_height()) // 3}")
+    top.lift()
+    top.focus_force()
+    # «поверх всех» — только чтобы появиться над игрой; дальше обычное окно (Alt+Tab, другие программы — поверх)
+    top.after(600, lambda: top.winfo_exists() and top.attributes("-topmost", False))
+    log.info("Открыл окно настроек")
+    return top
 
 
 def main():
@@ -1289,10 +2057,12 @@ def main():
             for attempt in ("первый раз", "повторно"):
                 log.info("--- %s (%dx%d), %s", os.path.basename(p), img.shape[1], img.shape[0], attempt)
                 t = time.time()
-                hit = loc.search(_gray(img), default_scales(*img.shape[:2]))
+                hit = loc.search(_gray(img), default_scales(*img.shape[:2]), img)
                 t_find = time.time() - t
-                res = rec.analyze(to_reference(img, *hit), native=(img,) + hit) if hit else "меню не найдено"
-                where = f"масштаб {hit[0]:.2f}, надпись в ({hit[1]:.0f},{hit[2]:.0f})" if hit else ""
+                res = (rec.analyze(to_reference(img, *hit), native=(img,) + hit, mode=loc.mode) if hit
+                       else "меню не найдено")
+                where = (f"вкладка «{TAB_RU[loc.mode]}», масштаб {hit[0]:.2f}, надпись в ({hit[1]:.0f},{hit[2]:.0f})"
+                         if hit else "")
                 line = (f"{os.path.basename(p)} {img.shape[1]}x{img.shape[0]} {attempt}: "
                         f"поиск {t_find:.2f}s, всего {time.time() - t:.2f}s; {where}; {res}")
                 log.info("Итог: %s", line)
@@ -1300,6 +2070,7 @@ def main():
         return
 
     menu = "--menu" in sys.argv          # консольная версия с меню («Wardogs Overlay.bat»)
+    tray_mode = "--tray" in sys.argv     # значок у часов (WardogsOverlay.exe)
     ok = take_single_instance()
     if not ok and "--restarted" in sys.argv:   # перезапуск из меню: ждём, пока старая копия закроется
         for _ in range(30):
@@ -1309,25 +2080,42 @@ def main():
                 break
     if not ok:
         log.warning("Уже запущена другая копия — эта закрывается")
-        message("Оверлей Wardogs уже запущен.\n\nЧтобы перезапустить — сначала выйди из него "
-                "(пункт 0 в меню или закрой его окно).")
+        message("Оверлей Wardogs уже запущен.\n\nЕго меню — значок у часов (правой кнопкой). "
+                "Чтобы перезапустить — сначала выйди из него.")
         return
     listen_for_quit()
     events_start()
+    ev(f"Версия {VERSION}", "dim")
     SCAN["hotkey"] = str(settings.get("hotkey", "Ctrl+Shift+O"))
     listen_hotkey(SCAN["hotkey"])
+    listen_compare_key(str(settings.get("compare_hotkey", "Ctrl+Shift+S")))
     if menu:
         ctypes.windll.kernel32.SetConsoleTitleW("Wardogs оверлей")
         print("\n Загружаю распознавание… (несколько секунд)", flush=True)
+    tray = None
+    ctx = {"rec": None, "new": None, "updating": False}
+    if tray_mode:   # значок появляется сразу, пока грузится распознавание (несколько секунд)
+        tray = start_tray(settings, ctx)
 
     log.info("Загружаю распознавание…")
     t0 = time.time()
     rec = Recognizer(settings["match_threshold"])
+    ctx["rec"] = rec
     log.info("Распознавание текста загружено за %.1f с", time.time() - t0)
     SCAN["active"].set()   # при запуске сразу ищем; нет меню — уснём через auto_off_seconds
+    if tray:
+        tray.set_tip(f"Wardogs оверлей {VERSION}")
     if menu:
         on_console_close(rec)
         threading.Thread(target=console_menu, args=(settings, rec), daemon=True, name="меню").start()
+    if settings.get("check_updates", True):
+        def on_new(v):
+            ctx["new"] = v
+            if tray:
+                tray.notify(f"Вышла версия {v}", "Скачать — пункт «Скачать новую версию» в меню значка")
+            else:
+                UI_MESSAGES.append((f"ВЫШЛА ВЕРСИЯ {v}", "Скачать — по ссылке в руководстве Steam", 10))
+        check_update(on_new)
     if settings.get("obs_server"):
         try:
             server.start(background=True)
@@ -1340,17 +2128,27 @@ def main():
     stop = threading.Event()
     fake = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "--fake" else None  # проверка без игры
     threading.Thread(target=capture_loop, args=(settings, rec, stop, fake), daemon=True, name="распознавание").start()
-    log.info("Работаю. Открой в игре: Продавец → Экипировка → Модули. Выход — пункт 0 в меню.")
+    log.info("Работаю. Открой в игре: Продавец → Экипировка → Модули. Выход — %s.",
+             "меню значка у часов" if tray_mode else "пункт 0 в меню")
 
+    show = settings["show_window"]
     try:
-        if not settings["show_window"]:
+        if not show and not tray_mode:
             while not server.quit_event.wait(1):
                 pass
-        else:
+        else:   # окно нужно и без плашки: в нём живёт окно настроек
             win = OverlayWindow(settings)
-            win.flash("ОВЕРЛЕЙ WARDOGS ЗАПУЩЕН",
-                      f"Искать меню — {settings.get('hotkey')} · закрыть — "
-                      + "пункт 0 в окне программы")
+            if show:
+                win.flash("ОВЕРЛЕЙ WARDOGS ЗАПУЩЕН",
+                          f"Искать меню — {settings.get('hotkey')} · "
+                          + ("меню — значок у часов (правой кнопкой)" if tray_mode else "закрыть — пункт 0 в окне программы"))
+            elif tray:
+                tray.notify("Оверлей Wardogs запущен", "Плашка выключена в настройках. Меню — правой кнопкой по значку")
+            opened = {"settings": None}
+
+            def restart():
+                RESTART["now"] = True
+                server.quit_event.set()
 
             def tick():
                 if server.quit_event.is_set():
@@ -1359,9 +2157,19 @@ def main():
                     return
                 while UI_MESSAGES:   # «поиск включён/выключен» от горячей клавиши
                     title, sub, secs = UI_MESSAGES.pop(0)
-                    win.flash(title, sub, secs)
-                win.move_to(PLACEMENT["pos"])
-                win.render(server.get_state())
+                    if show:
+                        win.flash(title, sub, secs)
+                while UI_ACTIONS:    # пункты меню значка, которым нужно окно (tkinter — только здесь)
+                    if UI_ACTIONS.pop(0) == "settings":
+                        top = opened["settings"]
+                        if top is not None and top.winfo_exists():
+                            top.lift()
+                            top.focus_force()
+                        else:
+                            opened["settings"] = settings_window(win.root, restart)
+                if show:
+                    win.move_to(PLACEMENT["pos"])
+                    win.render(server.get_state())
                 win.root.after(300, tick)
 
             tick()
@@ -1371,14 +2179,78 @@ def main():
     except Exception:
         log.exception("Окно поверх игры упало")
     stop.set()
+    if tray:
+        tray.close()
     rec.save(force=True)
     log.info("Память сохранена (%d ячеек). Выключено.", len(rec.mem["slots"]))
-    if RESTART["now"]:   # «6 — перезапустить» из меню: новая копия в этом же окне консоли
+    if RESTART["now"]:   # перезапуск (новые настройки): новая копия того же вида
         for h in _handles:
             if isinstance(h, int):
                 ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(h))
-        subprocess.Popen([sys.executable, "-I", os.path.abspath(__file__), "--menu", "--restarted"], cwd=HERE)
+        # .exe: новая копия распаковывается в СВОЮ временную папку (иначе берёт папку старой копии,
+        # а та, выключаясь, её удаляет — новая падает «No module named onnxruntime…»)
+        subprocess.Popen(([sys.executable] if FROZEN else [sys.executable, "-I", os.path.abspath(__file__)])
+                         + ["--tray" if tray_mode else "--menu", "--restarted"], cwd=HERE,
+                         env=dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1"))
         log.info("Запустил новую копию")
+    time.sleep(0.3)   # дать значку у часов исчезнуть
+
+
+UI_ACTIONS = []   # из меню значка — в главный поток (окно настроек)
+T_SCAN, T_UPDATE_DB, T_SETTINGS, T_EVENTS, T_FOLDER, T_NEW, T_EXIT = 1, 2, 3, 4, 5, 6, 9
+
+
+def start_tray(settings, ctx):
+    """Значок у часов с меню (вместо консольного окна)."""
+    import tray as tray_mod
+    hk = settings.get("hotkey", "Ctrl+Shift+O")
+
+    def items():
+        ready = ctx["rec"] is not None
+        out = []
+        if ctx["new"]:
+            out += [(f"★ Скачать новую версию {ctx['new']}…", T_NEW, False, True), None]
+        out += [(f"Поиск меню «Модули»\t{hk}", T_SCAN, SCAN["active"].is_set(), ready),
+                ("Обновляю базу…" if ctx["updating"] else "Обновить базу с MetaForge", T_UPDATE_DB, False,
+                 ready and not ctx["updating"]),
+                ("Настройки…", T_SETTINGS, False, True),
+                ("Журнал событий", T_EVENTS, False, True),
+                ("Открыть папку программы", T_FOLDER, False, True),
+                None,
+                (f"Выход   (версия {VERSION})", T_EXIT, False, True)]
+        return out
+
+    def on_command(cid):
+        log.info("Меню значка: пункт %d", cid)
+        if cid == T_SCAN:
+            toggle_scan("Меню значка")
+        elif cid == T_UPDATE_DB:
+            def run():
+                ctx["updating"] = True
+                t.notify("Обновляю базу…", "Несколько секунд")
+                try:
+                    ok, text = update_db_now(ctx["rec"])
+                finally:
+                    ctx["updating"] = False
+                t.notify("База обновлена" if ok else "База не обновилась", text)
+            threading.Thread(target=run, daemon=True, name="обновление-базы").start()
+        elif cid == T_SETTINGS:
+            UI_ACTIONS.append("settings")
+        elif cid == T_EVENTS:
+            if not os.path.exists(EVENTS_FILE):
+                open(EVENTS_FILE, "a", encoding="utf-8").close()
+            os.startfile(EVENTS_FILE)
+        elif cid == T_FOLDER:
+            os.startfile(HERE)
+        elif cid == T_NEW:
+            os.startfile(GUIDE_URL)
+        elif cid == T_EXIT:
+            log.info("Меню значка: выход")
+            server.quit_event.set()
+
+    t = tray_mod.Tray(ICON_FILE if os.path.exists(ICON_FILE) else None,
+                      f"Wardogs оверлей {VERSION} — загружается…", items, on_command, double_click=T_SETTINGS)
+    return t
 
 
 # Защита от второго запуска и команда «выключиться» — средствами Windows, без сервера
@@ -1410,6 +2282,10 @@ def listen_for_quit():
     k.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
     h = k.CreateEventW(None, True, False, QUIT_EVENT_NAME)
     _handles.append(h)
+    # мы единственная копия (проверено раньше) — если команда «выключиться» ещё висит от прошлой копии
+    # (её только что закрыли), сбрасываем, иначе новая копия сразу же выключится
+    k.ResetEvent.argtypes = [ctypes.c_void_p]
+    k.ResetEvent(h)
 
     def wait():
         k.WaitForSingleObject(h, 0xFFFFFFFF)
@@ -1460,6 +2336,62 @@ def listen_hotkey(text):
                 toggle_scan(f"Нажата {text}")
 
     threading.Thread(target=loop, daemon=True, name="горячая-клавиша").start()
+
+
+def publish(st):
+    """Отдать плашке (окну и OBS) то, что показываем: сборку и запомненную сборку (для сравнения)."""
+    if st and st.get("weapon"):
+        tab = st.get("tab")
+        server.set_state(st["weapon"], st["attachments"], None if tab == "ammo" else SAVED.get(st["weapon"]),
+                         ttk_payload(st["weapon"], tab, st.get("ammo")), tab, st.get("ammo"))
+    else:
+        server.set_state(None, [])
+
+
+def toggle_saved():
+    """Запомнить сборку, которая сейчас на плашке (дальше плашка показывает разницу с ней), или сбросить."""
+    st = STATUS["shown"]
+    if not st or not st.get("weapon") or st.get("tab") == "ammo":
+        return
+    w = st["weapon"]
+    if w in SAVED:
+        del SAVED[w]
+        log.info("%s — сравнение со сборкой %s сброшено", COMPARE_KEY["text"], w)
+        ev(f"Сравнение сборок {w} сброшено", "dim")
+    else:
+        SAVED[w] = list(st["attachments"])
+        log.info("%s — запомнил сборку для сравнения: %s", COMPARE_KEY["text"], describe_build(st))
+        ev("Запомнил сборку для сравнения — " + describe_build(st), "ok")
+    publish(st)
+
+
+def listen_compare_key(text):
+    """Клавиша «запомнить сборку». Во всей Windows её НЕ занимаем (в других программах Ctrl+Shift+S —
+    «Сохранить как…»): просто раз в 30 мс смотрим, зажата ли она, и только пока на экране плашка."""
+    try:
+        mods, vk = parse_hotkey(text)
+    except ValueError as e:
+        log.error("Клавиша сравнения %r не подходит: %s", text, e)
+        return
+    COMPARE_KEY["text"] = text
+    need = [k for bit, k in ((0x2, 0x11), (0x4, 0x10), (0x1, 0x12), (0x8, 0x5B)) if mods & bit]
+
+    def loop():
+        u = ctypes.windll.user32
+        was = False
+        while not server.quit_event.is_set():
+            if not STATUS["shown"]:
+                was = False
+                time.sleep(0.25)
+                continue
+            down = bool(u.GetAsyncKeyState(vk) & 0x8000) and all(u.GetAsyncKeyState(k) & 0x8000 for k in need)
+            if down and not was:
+                toggle_saved()
+            was = down
+            time.sleep(0.03)
+
+    threading.Thread(target=loop, daemon=True, name="клавиша-сравнения").start()
+    log.info("Клавиша %s — запомнить сборку / сбросить сравнение (пока видна плашка)", text)
 
 
 # ---------------------------------------------------------------- консольное меню
@@ -1576,18 +2508,9 @@ def console_menu(settings, rec):
     def update_db():
         say("Обновляю базу с MetaForge…", "info", 60)
         redraw()
-        r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "update_database.py")], cwd=HERE,
-                           capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if r.returncode == 0:
-            n_w, n_a = reload_db()
-            rec._tpl_cache.clear()
-            rec._miss.clear()
-            m = re.search(r"изменёнными статами: (\d+)", r.stdout or "")
-            changed = m.group(1) if m else "?"
-            ev(f"База обновлена: {n_w} пушек, {n_a} обвесов, изменено {changed}", "ok")
+        if update_db_now(rec)[0]:
             say("Готово. Что изменилось — в update_database.log", "ok")
         else:
-            ev("Обновить базу не получилось — старая не тронута", "err")
             say("Подробности — в update_database.log", "err")
 
     def edit_settings():

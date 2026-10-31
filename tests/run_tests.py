@@ -58,6 +58,15 @@ PARTIAL = {"11.webp": ("Super-45", {"Holographic Sight", "Rubberized Ergonomic F
                                     "SG Multi-Caliber Suppressor", "Super-45 13 RND Magazine",
                                     "Super-45 30 RND Magazine", "Super-45 40 RND Drum Magazine"})}
 NEGATIVE = ["9.png", "10.png", "neg_now.png", "neg_all.png"]
+# Вкладка «Боеприпасы» (1.4): снимок → (пушка, магазин, патроны). Прогоняются по всем вариантам картинки.
+AMMO_CASES = {
+    "ammo/galil_05_hp_ready.webp": ("Galil", "Galil 50 RND Magazine", "HollowPoint"),
+    "ammo/m4_05_ap_ready_mag2.webp": ("M4", "STANAG 60 RND Magazine", "ArmorPiercing"),
+    "ammo/tcx_03_ap_ready.webp": ("TCX-SPR", "TCX-SPR 28 RND Magazine", "ArmorPiercing"),
+    "ammo/m4_02_mag.webp": ("M4", "STANAG 30 RND Magazine", None),
+    "ammo/galil_01_empty.webp": ("Galil", None, None),
+    "hover/hover_35.webp": ("M4", None, None),
+}
 
 # ---------------------------------------------------------------- варианты картинки (OpenCV + numpy, без Pillow)
 BG = (14, 14, 14)
@@ -198,13 +207,29 @@ def variants(b):
 
 # ---------------------------------------------------------------- прогон
 def run_one(rec, loc, a):
-    hit = loc.search(wo._gray(a), wo.default_scales(*a.shape[:2]))
+    hit = loc.search(wo._gray(a), wo.default_scales(*a.shape[:2]), a)
     if not hit:
         return None
-    res = rec.analyze(wo.to_reference(a, *hit), native=(a,) + hit)
+    wo.AMMO_CHOICE.clear()   # «оставить патроны, если коробку закрыли» не должно маскировать ошибки
+    res = rec.analyze(wo.to_reference(a, *hit), native=(a,) + hit, mode=loc.mode)
     if not res or not res.get("weapon"):
         return {"weapon": None, "attachments": [], "raw": (res or {}).get("raw")}
     return res
+
+
+def judge_ammo(res, weapon, mag, ammo):
+    if res is None:
+        return "НЕТ МЕНЮ", ""
+    if res.get("tab") != "ammo":
+        return "ОШИБКА", f"не узнал вкладку «Боеприпасы»: {res}"
+    if res.get("weapon") != weapon:
+        return "ОШИБКА", f"пушка {res.get('weapon')!r} (прочитано {res.get('raw')!r}), нужна {weapon}"
+    got_mag = (res.get("attachments") or [None])[0]
+    if got_mag and got_mag != mag or res.get("ammo") and res.get("ammo") != ammo:
+        return "ОШИБКА", f"магазин {got_mag}, патроны {res.get('ammo')}; нужно {mag}, {ammo}"
+    if got_mag != mag or res.get("ammo") != ammo:
+        return "ПРОПУСК", f"магазин {got_mag}, патроны {res.get('ammo')}; нужно {mag}, {ammo}"
+    return "OK", ""
 
 
 def norm_set(names):
@@ -250,6 +275,18 @@ def main():
             rows.append((fname, vname, verdict, why, dt))
             print(f"{verdict:8} {fname:8} {vname:34} {dt:5.2f}s {why}", flush=True)
 
+    for fname, (weapon, mag, ammo) in AMMO_CASES.items():
+        if only and fname not in only:
+            continue
+        img = wo.read_rgb(os.path.join(SCREENS, fname))
+        for vname, v in variants(base_1080(img)):
+            t = time.time()
+            res = run_one(rec, loc, v)
+            verdict, why = judge_ammo(res, weapon, mag, ammo)
+            dt = time.time() - t
+            rows.append((fname, "патроны: " + vname, verdict, why, dt))
+            print(f"{verdict:8} {fname:8} {'патроны: ' + vname:34} {dt:5.2f}s {why}", flush=True)
+
     for fname in NEGATIVE:
         if only and fname not in only:
             continue
@@ -261,6 +298,27 @@ def main():
             verdict, why = ("OK", "") if ok else ("ОШИБКА", f"нашёл меню там, где его нет: {res}")
             rows.append((fname, "ловушка: " + vname, verdict, why, time.time() - t))
             print(f"{verdict:8} {fname:8} {'ловушка: ' + vname:34} {why}", flush=True)
+
+    # Отзыв в Steam 29.10: сняли рукоять — на её месте серый силуэт пустого слота, похожий на RVG; программа
+    # «держала» RVG по правилу «частично закрыт курсором». Скриншот AK74 с пустым слотом рукояти (ячейка 3):
+    # делаем вид, что секунду назад там стояла RVG, и порог «держать» ниже (у других пушек силуэт похож сильнее).
+    if not only or "ak_40_spectr.webp" in only:
+        for vname, img in (("как есть", wo.read_rgb(os.path.join(SCREENS, "hover", "ak_40_spectr.webp"))),):
+            for size_name, v in ((vname, img), ("1440p", resize(img, 2560, 1440))):
+                rec._slot_last.clear()
+                rec._hold.clear()
+                rec._miss.clear()
+                rec._slot_last[("AK74", 2)] = "RVG Vertical Foregrip"
+                old_min = wo.HOLD_MIN
+                wo.HOLD_MIN = 0.30
+                try:
+                    res = run_one(rec, loc, v)
+                finally:
+                    wo.HOLD_MIN = old_min
+                bad = "RVG Vertical Foregrip" in (res or {}).get("attachments", [])
+                verdict, why = ("ОШИБКА", f"пустой слот принят за RVG: {res}") if bad else ("OK", "")
+                rows.append(("ak_40_spectr.webp", "пустой слот рукояти: " + size_name, verdict, why, 0.0))
+                print(f"{verdict:8} ak_40_spectr.webp  пустой слот рукояти: {size_name} {why}", flush=True)
 
     # ---- отчёт
     from collections import Counter, defaultdict

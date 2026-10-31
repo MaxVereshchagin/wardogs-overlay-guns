@@ -6,35 +6,49 @@ OBS:     Источник «Браузер» → http://127.0.0.1:8777/overlay.h
   /overlay.html        — плашка для OBS (?side=right — справа, ?demo — пример)
   /state               — что сейчас показывать (JSON)
   /set?weapon=AK74&att=CQB 74 Brake|RK6 Tactical Foregrip   — выставить вручную (для проверки)
+       …&saved=CQB 74 Brake|… — сравнить с запомненной сборкой
   /clear               — спрятать плашку
   /quit                — выключить программу
 """
 import json
 import logging
 import os
+import shutil
+import sys
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 PORT = 8777
-HERE = os.path.dirname(os.path.abspath(__file__))
+# В WardogsOverlay.exe база (wardogs_data.js) лежит рядом с .exe, а overlay.html — внутри .exe:
+# при запуске сервера кладём overlay.html рядом с базой и отдаём всё из папки .exe.
+HERE = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
+        else os.path.dirname(os.path.abspath(__file__)))
+BUNDLE = getattr(sys, "_MEIPASS", HERE)
 log = logging.getLogger("wardogs")   # тот же журнал, что у программы (overlay.log)
 
 _lock = threading.Lock()
-_state = {"weapon": None, "attachments": []}
+_state = {"weapon": None, "attachments": [], "saved": None, "ttk": None, "tab": None, "ammo": None}
 quit_event = threading.Event()  # программа смотрит на него и закрывается
 
 
-def set_state(weapon, attachments):
-    """Вызывается распознаванием экрана (и вручную через /set)."""
+def set_state(weapon, attachments, saved=None, ttk=None, tab=None, ammo=None):
+    """Вызывается распознаванием экрана (и вручную через /set). saved — запомненная сборка этой пушки
+    (Ctrl+Shift+S): плашка показывает разницу «было → сейчас». ttk — блок TTK
+    {"title", "cols": [...], "rows": [[подпись, [[выстрелов, секунд], …], выбрано?], …]}.
+    tab — "ammo" на вкладке «Боеприпасы» (тогда ammo — выбранные патроны: FMJ / HollowPoint / ArmorPiercing)."""
     with _lock:
         _state["weapon"] = weapon
         _state["attachments"] = list(attachments)
+        _state["saved"] = None if saved is None else list(saved)
+        _state["ttk"] = ttk
+        _state["tab"] = tab
+        _state["ammo"] = ammo
 
 
 def get_state():
     with _lock:
-        return dict(_state)
+        return {k: (list(v) if isinstance(v, list) else v) for k, v in _state.items()}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -58,7 +72,8 @@ class Handler(SimpleHTTPRequestHandler):
             q = parse_qs(url.query)
             weapon = q.get("weapon", [None])[0]
             att = [a for a in q.get("att", [""])[0].split("|") if a]
-            set_state(weapon, att)
+            saved = q.get("saved", [None])[0]
+            set_state(weapon, att, None if saved is None else [a for a in saved.split("|") if a])
             return self._json(get_state())
         if url.path == "/clear":
             set_state(None, [])
@@ -86,6 +101,8 @@ def already_running():
 
 
 def start(background=False):
+    if BUNDLE != HERE:   # .exe: свежий overlay.html из .exe — рядом с базой
+        shutil.copyfile(os.path.join(BUNDLE, "overlay.html"), os.path.join(HERE, "overlay.html"))
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     log.info("Сервер для OBS: http://127.0.0.1:%d/overlay.html", PORT)
     if background:

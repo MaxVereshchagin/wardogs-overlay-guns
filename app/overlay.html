@@ -45,6 +45,25 @@
   .val { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
   .good { color: var(--good); } .bad { color: var(--bad); } .neutral { color: var(--text); }
   .src { margin-top: 8px; font-size: 10px; color: var(--dim); opacity: .7; letter-spacing: .5px; }
+  .gone { color: var(--dim); text-decoration: line-through; }
+  .came { color: var(--accent); font-weight: 600; }
+  .cmp-head { display: grid; grid-template-columns: 1fr 70px 16px 84px; gap: 6px; font-size: 11px; color: var(--dim);
+              letter-spacing: 1px; text-transform: uppercase; margin-bottom: 2px; }
+  .cmp-head b { color: var(--accent); font-weight: 600; }
+  .cmp { display: grid; grid-template-columns: 1fr 70px 16px 84px; gap: 6px; align-items: center; font-size: 15px;
+         line-height: 1.7; font-variant-numeric: tabular-nums; }
+  .cmp .was { text-align: right; color: var(--dim); } .cmp .arr { color: var(--dim); text-align: center; }
+  .cmp .now { text-align: right; font-weight: 600; } .cmp .same { color: var(--dim); }
+  #ttk:empty { display: none; }
+  #ttk { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .ttk-title { font-size: 11px; color: var(--accent); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+  .ttk-row { display: grid; grid-template-columns: 1fr repeat(5, 54px); align-items: center; font-size: 15px;
+             line-height: 1.2; padding: 3px 0; font-variant-numeric: tabular-nums; }
+  .ttk-row.cols { font-size: 9px; color: var(--dim); letter-spacing: .5px; }
+  .ttk-row > span:not(:first-child) { text-align: center; }
+  .ttk-row b { display: block; font-weight: 600; font-size: 16px; }
+  .ttk-row small { display: block; color: var(--dim); font-size: 11px; }
+  .ttk-row.chosen > span:first-child { color: var(--accent); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -53,6 +72,7 @@
   <div class="base" id="base"></div>
   <div class="atts" id="atts"></div>
   <div id="stats"></div>
+  <div id="ttk"></div>
   <div class="src">Данные: metaforge.app</div>
 </div>
 
@@ -85,10 +105,104 @@ const atts = Object.fromEntries(WARDOGS.A.map(a => [a[0], a]));
 const params = new URLSearchParams(location.search);
 if (params.get("side") === "right") document.body.classList.add("right");
 
+// Во сколько раз обвесы меняют каждый стат (как в игре: (родное или заменённое + прибавки) × множители).
+function totals(names, w) {
+  const mult = {}, over = {}, add = {};
+  for (const a of names.map(n => atts[n]).filter(Boolean)) for (const [attr, v, op] of a[2]) {
+    if (op === "=") over[attr] = v;
+    else if (op === "+") add[attr] = (add[attr] ?? 0) + v;
+    else mult[attr] = (mult[attr] ?? 1) * v;
+  }
+  const adsBase = w[5] ? parseFloat(w[5]) : NaN;
+  const total = {};
+  for (const attr of new Set([...Object.keys(mult), ...Object.keys(over), ...Object.keys(add)])) {
+    const base = attr === "ADS time" && !isNaN(adsBase) ? adsBase : 1;
+    total[attr] = (((attr in over) ? over[attr] : base) + (add[attr] ?? 0)) * (mult[attr] ?? 1) / base;
+  }
+  return total;
+}
+const sameSet = (a, b) => a.length === b.length && a.every(x => b.includes(x));
+
+// Сравнение с запомненной сборкой (Ctrl+Shift+S): «было → сейчас».
+function compareView(state) {
+  const cur = state.attachments || [];
+  if (Array.isArray(state.saved) && !sameSet(state.saved, cur))
+    return { kind: "saved", old: state.saved, now: cur, gone: state.saved.filter(n => !cur.includes(n)), came: cur.filter(n => !state.saved.includes(n)) };
+  return null;
+}
+
+function statText(k, m, w) {
+  const adsBase = w[5] ? parseFloat(w[5]) : NaN;
+  if (k === "ADS zoom") return m === undefined ? "—" : `${+m.toFixed(1)}×`;
+  if (k === "ADS time" && !isNaN(adsBase)) return `${(adsBase * m).toFixed(2).replace(".", ",")} с`;
+  const pct = Math.round((m - 1) * 100);
+  return `${pct > 0 ? "+" : pct < 0 ? "−" : "±"}${Math.abs(pct)}%`;
+}
+
+function renderCompare(state, w, v) {
+  const shown = state.attachments || [];
+  const all = shown.concat(v.gone.filter(n => !shown.includes(n)));
+  document.getElementById("atts").innerHTML = all.map(n => atts[n]).filter(Boolean).map(a => {
+    const cls = v.gone.includes(a[0]) ? "gone" : v.came.includes(a[0]) ? "came" : "";
+    return `<div class="att"><span class="slot">${SLOT_RU[a[1]] || a[1]}</span><span class="${cls}">${v.came.includes(a[0]) ? "→ " : ""}${a[0]}</span></div>`;
+  }).join("") || `<div class="none">Без обвесов</div>`;
+  const tOld = totals(v.old, w), tNew = totals(v.now, w);
+  const head = ["С запомненной", "было", "сейчас"];
+  const rows = ORDER.filter(k => Math.abs((tOld[k] ?? 1) - 1) >= 0.005 || Math.abs((tNew[k] ?? 1) - 1) >= 0.005).slice(0, MAX_ROWS + 2).map(k => {
+    const [ru, better] = STATS[k];
+    // зум задаёт прицел; у некоторых (Spectr 4x) в базе его нет — показываем «—», а не «1×»
+    const a = k === "ADS zoom" ? tOld[k] : (tOld[k] ?? 1), b = k === "ADS zoom" ? tNew[k] : (tNew[k] ?? 1);
+    const was = statText(k, a, w), now = statText(k, b, w);
+    const verdict = !better || was === now ? 0 : ((b < a) === (better === "low") ? 1 : -1);
+    const name = k === "ADS time" && w[5] ? "Прицеливание" : ru;
+    const cls = verdict > 0 ? "good" : verdict < 0 ? "bad" : was === now ? "same" : "neutral";
+    return `<div class="cmp"><span class="${verdict ? "" : "same"}">${name}</span><span class="was">${was}</span><span class="arr">→</span><span class="now ${cls}">${now}${verdict > 0 ? " ▲" : verdict < 0 ? " ▼" : ""}</span></div>`;
+  });
+  document.getElementById("stats").innerHTML =
+    `<div class="cmp-head"><b>${head[0]}</b><span style="text-align:right">${head[1]}</span><span></span><span style="text-align:right">${head[2]}</span></div>` +
+    (rows.join("") || `<div class="none">Обвесы не меняют статы</div>`);
+}
+
+// TTK (считает программа): сколько попаданий и секунд до убийства — строки × без брони/броня 2/броня 4.
+// Выбранные патроны (вкладка «Боеприпасы») подсвечены.
+function renderTTK(t) {
+  const el = document.getElementById("ttk");
+  if (!t || !t.rows) { el.innerHTML = ""; return; }
+  const fastest = t.cols.map((_, i) => Math.min(...t.rows.map(r => r[1][i][1]).filter(x => x != null)));
+  const cell = ([shots, secs], i) => shots == null ? `<span class="same">—</span>`
+    : `<span class="${t.best && secs === fastest[i] ? "good" : ""}"><b>${shots}×</b><small${t.best && secs === fastest[i] ? ' class="good"' : ""}>${secs.toFixed(2).replace(".", ",")} с</small></span>`;
+  // подписи колонок короче — пять колонок должны влезть в 380 px
+  t = { ...t, cols: t.cols.map(c => c.replace("БЕЗ БРОНИ", "БЕЗ").replace("БРОНЯ ", "БР. ")) };
+  el.innerHTML = `<div class="ttk-title">${t.title}</div>` +
+    `<div class="ttk-row cols"><span></span>${t.cols.map(c => `<span>${c}</span>`).join("")}</div>` +
+    t.rows.map(([label, cells, chosen]) => `<div class="ttk-row${chosen ? " chosen" : ""}"><span>${chosen ? "▶ " : ""}${label}</span>${cells.map(cell).join("")}</div>`).join("");
+}
+
+const AMMO_RU = { FMJ: "обычные (FMJ)", HollowPoint: "экспансивные (HP)", ArmorPiercing: "бронебойные (AP)" };
+const AMMO_NOTE = { FMJ: "ровный урон по всем целям", HollowPoint: "больше урона по телу, намного хуже по броне",
+                    ArmorPiercing: "лучше по броне, чуть меньше урона без неё" };
+
 function render(state) {
   const panel = document.getElementById("panel");
   const w = state && weapons[state.weapon];
   if (!w) { panel.classList.remove("show"); return; }
+  renderTTK(state.ttk);
+  if (state.tab === "ammo") {   // вкладка «Боеприпасы»: магазин и патроны, TTK по видам патронов
+    document.getElementById("weapon").textContent = w[0];
+    document.getElementById("cls").textContent = CLASS_RU[w[1]] || w[1] || "";
+    document.getElementById("base").textContent =
+      [w[2] && `Урон ${w[2]}`, w[3] && w[3].replace("rpm", "в/мин"), w[4] && `Дальность ${w[4].replace(" m", " м")}`]
+        .filter(Boolean).join("  ·  ");
+    const mag = (state.attachments || []).map(n => atts[n]).filter(Boolean);
+    document.getElementById("atts").innerHTML =
+      (mag.length ? mag.map(a => `<div class="att"><span class="slot">Магазин</span><span>${a[0]}</span></div>`).join("")
+                  : `<div class="none">Магазин ещё не выбран</div>`) +
+      `<div class="att"><span class="slot">Патроны</span><span class="${state.ammo ? "" : "none"}">${AMMO_RU[state.ammo] || "ещё не выбраны"}</span></div>` +
+      (AMMO_NOTE[state.ammo] ? `<div class="att"><span class="slot"></span><span class="none">${AMMO_NOTE[state.ammo]}</span></div>` : "");
+    document.getElementById("stats").innerHTML = "";
+    panel.classList.add("show");
+    return;
+  }
 
   document.getElementById("weapon").textContent = w[0];
   document.getElementById("cls").textContent = CLASS_RU[w[1]] || w[1] || "";
@@ -96,11 +210,15 @@ function render(state) {
     [w[2] && `Урон ${w[2]}`, w[3] && w[3].replace("rpm", "в/мин"), w[4] && `Дальность ${w[4].replace(" m", " м")}`, w[5] && `Прицел. ${w[5].replace("s", " с")}`]
       .filter(Boolean).join("  ·  ");
 
+  const view = compareView(state);
+  if (view) { renderCompare(state, w, view); panel.classList.add("show"); return; }
+
   const list = (state.attachments || []).map(n => atts[n]).filter(Boolean);
   const attsEl = document.getElementById("atts");
   attsEl.innerHTML = list.length
     ? list.map(a => `<div class="att"><span class="slot">${SLOT_RU[a[1]] || a[1]}</span><span>${a[0]}</span></div>`).join("")
     : `<div class="none">Без обвесов</div>`;
+  if (AMMO_RU[state.ammo]) attsEl.innerHTML += `<div class="att"><span class="slot">Патроны</span><span>${AMMO_RU[state.ammo]}</span></div>`;
 
   // Эффект: [стат, значение] — умножить; [.., "="] — заменить; [.., "+"] — прибавить.
   // Итог как в игре: (родное или заменённое + прибавки) × множители; храним «во сколько раз изменилось».
@@ -146,9 +264,17 @@ function render(state) {
   panel.classList.add("show");
 }
 
-// Демо-режим: overlay.html?demo
-if (params.has("demo")) {
-  render({ weapon: "AK74", attachments: ["CQB 74 Brake", "RK6 Tactical Foregrip", "2.5x Combat Optic", "AK74 60 RND Magazine"] });
+// Демо-режим: overlay.html?demo (?demo=saved — сравнение с запомненной сборкой)
+if (params.get("demo") === "ammo") {   // ?demo=ammo — вкладка «Боеприпасы»
+  render({ weapon: "Galil", attachments: ["Galil 50 RND Magazine"], tab: "ammo", ammo: "HollowPoint",
+           ttk: { title: "TTK в тело  ·  50 м  ·  какие патроны лучше", cols: ["БЕЗ БРОНИ", "БРОНЯ 2", "БРОНЯ 4"], best: true,
+                  rows: [["Обычные", [[4, 0.33], [7, 0.61], [10, 0.89]], false], ["HP", [[2, 0.15], [17, 1.53], [40, 3.65]], true],
+                         ["AP", [[5, 0.42], [7, 0.61], [8, 0.7]], false]] } });
+} else if (params.has("demo")) {
+  render({ weapon: "AK74", attachments: ["CQB 74 Brake", "RK6 Tactical Foregrip", "2.5x Combat Optic", "AK74 60 RND Magazine"],
+           saved: params.get("demo") === "saved" ? ["PBS-4 Suppressor", "RK6 Tactical Foregrip", "2.5x Combat Optic", "AK74 60 RND Magazine"] : null,
+           ttk: { title: "TTK  ·  50 м  ·  обычные патроны", cols: ["БЕЗ БРОНИ", "БРОНЯ 2", "БРОНЯ 4"],
+                  rows: [["Тело", [[4, 0.34], [7, 0.61], [10, 0.89]], false], ["Голова", [[2, 0.15], [3, 0.24], [5, 0.43]], false]] } });
 } else {
   let last = "";
   async function poll() {

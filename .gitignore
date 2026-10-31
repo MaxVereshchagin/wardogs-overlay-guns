@@ -23,3 +23,15 @@ app/debug_miss.jpg
 tests/screens/
 tests/report.txt
 tests/run_output.txt
+
+# Руководство Steam: картинки из игры
+steam_guide/
+
+# Резервные копии перед изменениями
+backup/
+
+# Результаты прогонов проверок (1.3–1.5)
+tests/run_*.txt
+tests/report_*.txt
+tests/*.log
+tests/run_output*.txt

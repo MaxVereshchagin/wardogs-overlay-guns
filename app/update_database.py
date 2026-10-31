@@ -21,8 +21,10 @@ import sys
 import time
 import urllib.request
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-RAW = os.path.join(HERE, "metaforge_raw")
+# В WardogsOverlay.exe база и иконки лежат рядом с .exe (а не во временной папке, куда распакован код)
+HERE = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
+        else os.path.dirname(os.path.abspath(__file__)))
+RAW =os.path.join(HERE, "metaforge_raw")
 API = "https://metaforge.app/api/wardogs/"
 ICON_URL = "https://static.metaforge.app/wardogs/icons/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) WardogsOverlay", "Accept": "application/json"}
@@ -32,9 +34,10 @@ for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)-7s %(message)s",
-                    handlers=[logging.FileHandler(os.path.join(HERE, "update_database.log"), encoding="utf-8"),
-                              logging.StreamHandler(sys.stdout)])
+_handlers = [logging.FileHandler(os.path.join(HERE, "update_database.log"), encoding="utf-8")]
+if sys.stdout is not None:   # .exe без консоли: только в файл
+    _handlers.append(logging.StreamHandler(sys.stdout))
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)-7s %(message)s", handlers=_handlers)
 log = logging.getLogger("update")
 
 # Атрибуты игры → названия статов в программе (подписи на плашке берутся из программы).
@@ -110,6 +113,30 @@ def effects_of(stats):
             e.append(op)
         out.append(e)
     return out, stats.get("capacity")
+
+
+CAL_KEYS = ("baseDamage", "pellets", "loads", "pen", "rules", "plate", "typicalSpeed", "dragModel",
+            "dragCoefficient", "mass", "diameter", "speedDecay", "label", "roundIcons")
+WEAPON_KEYS = ("name", "weaponClass", "calibre", "roundsPerMinute", "muzzleVelocity", "falloff", "typicalSpeed",
+               "rules", "plate", "magSize")
+
+
+def ballistics_for_ttk(ball, vendor_names):
+    """Из баллистики MetaForge — только то, что нужно для TTK (ballistics.py), и только пушки продавца."""
+    weapons = [{k: w[k] for k in WEAPON_KEYS if k in w} for w in ball.get("weapons", [])
+               if w.get("name") in vendor_names]
+    used = {w.get("calibre") for w in weapons}
+    calibres = {k: {x: c[x] for x in CAL_KEYS if x in c} for k, c in ball.get("calibres", {}).items() if k in used}
+    armour = [{k: a[k] for k in ("name", "slot", "tier", "reduction", "durability", "covers") if k in a}
+              for a in ball.get("armour", [])]
+    missing = sorted(vendor_names - {w["name"] for w in weapons})
+    if missing:
+        log.warning("Нет баллистики (TTK не покажу) для: %s", missing)
+    log.info("Баллистика для TTK: %d пушек, %d калибров, %d видов брони (данные от %s)",
+             len(weapons), len(calibres), len(armour), ball.get("generatedAt"))
+    return {"generatedAt": ball.get("generatedAt"), "assumedHealth": ball.get("assumedHealth", 100),
+            "hitboxes": ball.get("hitboxes", {}), "armour": armour, "calibres": calibres,
+            "dragCurves": ball.get("dragCurves", {}), "weapons": weapons}
 
 
 def load_old():
@@ -212,7 +239,7 @@ def main():
         log.info("Старая база сохранена как wardogs_data.prev.js")
     payload = {"source": "https://metaforge.app/wardogs/database",
                "generatedAt": db.get("generatedAt"), "statsAt": time.strftime("%Y-%m-%d"),
-               "W": weapons, "A": atts}
+               "W": weapons, "A": atts, "B": ballistics_for_ttk(ball, {w[0] for w in weapons})}
     with open(data_path, "w", encoding="utf-8") as f:
         f.write("// База Wardogs для оверлея. Собрана update_database.py с MetaForge — руками не править.\n")
         f.write("// Пушка: [название, класс, урон, скорострельность, дальность, время прицеливания, цена]\n")
@@ -227,7 +254,10 @@ def main():
     # ---- иконки
     os.makedirs(os.path.join(HERE, "icons"), exist_ok=True)
     got = 0
-    for icon in sorted(set(icons.values())):
+    # иконки коробок с патронами (FMJ / HP / AP) — по ним узнаём патроны на вкладке «Боеприпасы»
+    round_icons = {i for c in payload["B"]["calibres"].values() for i in (c.get("roundIcons") or {}).values()}
+    log.info("Иконок патронов: %d", len(round_icons))
+    for icon in sorted(set(icons.values()) | round_icons):
         path = os.path.join(HERE, "icons", icon + ".webp")
         if os.path.exists(path):
             continue
@@ -242,9 +272,14 @@ def main():
     return 0
 
 
-if __name__ == "__main__":
+def run():
+    """Обновить базу и вернуть код выхода (0 — хорошо). Так же вызывается из WardogsOverlay.exe --update-db."""
     try:
-        sys.exit(main())
+        return main()
     except Exception:
         log.exception("Обновление не удалось — старая база не тронута")
-        sys.exit(1)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(run())

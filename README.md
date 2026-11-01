@@ -1,6 +1,49 @@
-# Wardogs Overlay — бафы и дебафы обвесов, TTK, патроны и Оружейник
+# Wardogs Overlay — attachment stats, TTK, ammo and Gunsmith
 
-*English: exact attachment stats, TTK and ammo comparison right in the Wardogs build menu. Works with the English and Russian game, the program speaks both (RU / EN). Download: [Releases](../../releases) → `WardogsOverlay_v2.0.zip`.*
+**[English](#english)** · **[Русский](#русский)**
+
+## English
+
+An overlay for **Wardogs**. When you build a weapon at the vendor (**Equipment → ATTC.** or **AMMO**), a panel appears
+next to the menu with the exact numbers the game doesn't show: which attachments are installed and what they do —
+good in green, bad in red, ADS time in seconds — plus **TTK**: how many hits and seconds it takes to kill.
+Works with the **English and Russian** game; the program itself speaks both (RU / EN).
+
+### Download and run
+
+1. Open **[Releases](../../releases)** and download `WardogsOverlay_v2.0.zip`.
+2. Extract it (right click → «Extract All…»). Don't run it from inside the zip.
+3. Run **`WardogsOverlay.exe`**. Nothing to install. A **W** icon appears next to the clock.
+4. In the game: screen mode **«Borderless windowed»**, then **Equipment Vendor → Equipment → ATTC.** or **AMMO**.
+
+If Windows says «Windows protected your PC» — «More info» → «Run anyway» (the program is home-made and not signed).
+Guide on Steam: [English](https://steamcommunity.com/sharedfiles/filedetails/?id=3831395119) ·
+[Russian](https://steamcommunity.com/sharedfiles/filedetails/?id=3822235930).
+
+### Features (2.0)
+
+- **Attachments:** exact multipliers for every attachment and the total for the build.
+- **TTK:** body and head, no armor and armor 1–4; fire rate, damage falloff and bullet travel included —
+  matches the MetaForge calculator (checked on 376 cases). **Distance buttons** for weapons that lose damage with range.
+- **AMMO tab:** magazine and ammo (FMJ / HP / AP), TTK of all three against every armor level; the fastest is green.
+- **Gunsmith suggests** the best muzzle and grip (Balance / Recoil / ADS) with NOW and SUGGESTED columns.
+- **Details:** the 4 main stats or every stat that changes. **Compare builds:** `Ctrl+Shift+S`.
+- **Control panel** (double click the tray icon): status tiles, switches, hotkeys (a single F-key works too).
+- **Panel for OBS:** Browser source → `http://127.0.0.1:8777/overlay.html` — same as the in-game panel.
+- Tells you about new versions (checks the Steam guide, downloads nothing).
+
+### Is it safe?
+
+It only takes screenshots of the game window (process `WardogsClient`) and draws its own window — like OBS or Discord.
+No memory reading, no injection, game files are not changed. Menu text is found by image matching, weapon names
+by OCR (RapidOCR), attachments by their icons; stats and TTK come from MetaForge data.
+A detailed log (`overlay.log`) is written next to the program.
+
+Requirements: Windows 10/11 64-bit.
+
+---
+
+## Русский
 
 Оверлей для игры **Wardogs**. Когда собираешь пушку у продавца (**Экипировка → Модули** или **Боеприпасы**; в английской игре — **ATTC.** / **AMMO**),
 сбоку появляется плашка: какая пушка, какие обвесы стоят и что они дают —
@@ -21,7 +64,7 @@
  Голова            2×    3×    3×    4×    5×
 ```
 
-## Скачать и запустить
+### Скачать и запустить
 
 1. Открой **[Releases](../../releases)** и скачай `WardogsOverlay_v2.0.zip`.
 2. Распакуй (правой кнопкой → «Извлечь всё…»). Из самого архива не запускай.
@@ -31,7 +74,7 @@
 Если Windows покажет «Система Windows защитила ваш компьютер» — «Подробнее» → «Выполнить в любом случае»
 (программа самодельная и не подписана).
 
-## Что умеет (2.0)
+### Что умеет (2.0)
 
 - **Английский язык:** игра на английском распознаётся так же, как русская; сама программа говорит по-русски или по-английски.
 - **Оружейник рекомендует:** лучшее дуло и рукоять для пушки (режимы Баланс / Отдача / ADS), колонки СЕЙЧАС и СОВЕТ.
@@ -50,7 +93,7 @@
 - Плашка для OBS: источник «Браузер» → `http://127.0.0.1:8777/overlay.html` (включается в пульте) — показывает то же, что плашка в игре.
 - Сам сообщает о новой версии (смотрит руководство в Steam, ничего не скачивает).
 
-## Как это работает
+### Как это работает
 
 - Снимает **только окно игры** (по процессу `WardogsClient`), OBS и другие окна не мешают.
 - Находит меню по надписям «МОДУЛИ» / ATTACHMENTS, «ШАГ 1» / STP 1 и «ЯЧЕЙКИ ДЛЯ ЭКИПИРОВКИ» / EQUIPMENT SLOTS в любом масштабе —

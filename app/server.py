@@ -30,6 +30,15 @@ log = logging.getLogger("wardogs")   # тот же журнал, что у пр�
 _lock = threading.Lock()
 _state = {"weapon": None, "attachments": [], "saved": None, "ttk": None, "tab": None, "ammo": None}
 quit_event = threading.Event()  # программа смотрит на него и закрывается
+VIEW = {"make": None}           # программа кладёт сюда, как собрать готовую плашку (plate_model) — её рисует overlay.html
+DEMOS = {   # /state?demo=… — пример плашки без игры (проверить, как выглядит в OBS)
+    "1": {"weapon": "AK74", "attachments": ["CQB 74 Brake", "RK6 Tactical Foregrip", "2.5x Combat Optic"], "tab": "modules",
+          "ammo": "ArmorPiercing", "ttk": True},
+    "saved": {"weapon": "AK74", "attachments": ["CQB 74 Brake", "RK6 Tactical Foregrip"], "tab": "modules",
+              "saved": ["PBS-4 Suppressor", "RK6 Tactical Foregrip"], "ttk": True},
+    "ammo": {"weapon": "Super-45", "attachments": [], "tab": "ammo", "ammo": "HollowPoint", "ttk": True},
+    "shotgun": {"weapon": "M500", "attachments": [], "tab": "ammo", "ammo": "FMJ", "ttk": True},
+}
 
 
 def set_state(weapon, attachments, saved=None, ttk=None, tab=None, ammo=None):
@@ -67,7 +76,15 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
         if url.path == "/state":
-            return self._json(get_state())
+            q = parse_qs(url.query)
+            st = dict(DEMOS.get(q.get("demo", [""])[0]) or {}) or get_state()
+            if VIEW["make"]:
+                try:
+                    st["view"] = VIEW["make"](st)
+                except Exception:
+                    log.exception("Сервер: не смог собрать плашку для OBS")
+                    st["view"] = None
+            return self._json(st)
         if url.path == "/set":
             q = parse_qs(url.query)
             weapon = q.get("weapon", [None])[0]

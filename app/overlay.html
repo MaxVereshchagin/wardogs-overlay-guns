@@ -3,290 +3,161 @@
 <head>
 <meta charset="utf-8">
 <title>Wardogs обвесы</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&display=swap" rel="stylesheet">
+<!-- Плашка для OBS (источник «Браузер», 1920×1080). С 1.8 ничего не считает сама: программа отдаёт в /state
+     готовую плашку (поле view) — те же данные и тот же язык, что у плашки поверх игры. ?side=right — справа,
+     ?demo=1 | saved | ammo | shotgun — пример без игры (программа должна быть запущена). -->
 <style>
   :root {
-    --bg: rgba(14, 16, 12, 0.88);
-    --line: rgba(190, 200, 150, 0.18);
-    --text: #e9ecdf;
-    --dim: #9aa38a;
-    --accent: #e8a33a;
-    --good: #5fd068;
-    --bad: #ff5a4e;
+    --bg: rgba(14, 16, 12, 0.92); --line: #3a3f30; --text: #e9ecdf; --dim: #9aa38a; --faint: #6d7560;
+    --accent: #e8a33a; --good: #5fd068; --bad: #ff5a4e; --track: #25281f;
   }
   html, body { margin: 0; background: transparent; overflow: hidden; }
-  body { font-family: "Oswald", "Bahnschrift", "Segoe UI", sans-serif; color: var(--text); }
-
+  body { font-family: "Bahnschrift", "Segoe UI", sans-serif; color: var(--text); }
   #panel {
-    position: absolute; top: 24px; left: 24px; width: 380px;
-    background: var(--bg); border: 1px solid var(--line); border-left: 4px solid var(--accent);
-    padding: 14px 16px 12px; box-shadow: 0 8px 30px rgba(0,0,0,.45);
+    position: absolute; top: 24px; left: 24px; width: 380px; box-sizing: border-box;
+    background: var(--bg); border-left: 4px solid var(--accent); padding: 14px 16px 10px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.45);
     transform: translateX(-120%); opacity: 0; transition: transform .35s ease, opacity .35s ease;
   }
   #panel.show { transform: none; opacity: 1; }
-  body.right #panel { left: auto; right: 24px; transform: translateX(120%); border-left: 1px solid var(--line); border-right: 4px solid var(--accent); }
+  body.right #panel { left: auto; right: 24px; transform: translateX(120%); border-left: 0; border-right: 4px solid var(--accent); }
   body.right #panel.show { transform: none; }
-
-  .head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-  .weapon { font-size: 30px; font-weight: 700; letter-spacing: .5px; line-height: 1; text-transform: uppercase; }
-  .cls { font-size: 13px; color: var(--accent); text-transform: uppercase; letter-spacing: 1.5px; white-space: nowrap; }
-  .base { font-size: 13px; color: var(--dim); margin-top: 6px; letter-spacing: .3px; }
-
-  .atts { margin: 10px 0 8px; padding: 8px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-  .att { display: flex; gap: 8px; align-items: baseline; font-size: 15px; line-height: 1.5; }
-  .slot { flex: 0 0 74px; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
-  .none { color: var(--dim); font-size: 14px; }
-
-  .stat { display: grid; grid-template-columns: 1fr 104px 66px; align-items: center; gap: 10px; font-size: 15px; line-height: 1.75; }
-  .bar { height: 6px; background: rgba(255,255,255,.08); position: relative; }
-  .bar i { position: absolute; top: 0; bottom: 0; }
-  .bar .mid { left: 50%; width: 1px; background: rgba(255,255,255,.35); }
-  .val { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .good { color: var(--good); } .bad { color: var(--bad); } .neutral { color: var(--text); }
-  .src { margin-top: 8px; font-size: 10px; color: var(--dim); opacity: .7; letter-spacing: .5px; }
-  .gone { color: var(--dim); text-decoration: line-through; }
-  .came { color: var(--accent); font-weight: 600; }
-  .cmp-head { display: grid; grid-template-columns: 1fr 70px 16px 84px; gap: 6px; font-size: 11px; color: var(--dim);
-              letter-spacing: 1px; text-transform: uppercase; margin-bottom: 2px; }
-  .cmp-head b { color: var(--accent); font-weight: 600; }
-  .cmp { display: grid; grid-template-columns: 1fr 70px 16px 84px; gap: 6px; align-items: center; font-size: 15px;
-         line-height: 1.7; font-variant-numeric: tabular-nums; }
-  .cmp .was { text-align: right; color: var(--dim); } .cmp .arr { color: var(--dim); text-align: center; }
-  .cmp .now { text-align: right; font-weight: 600; } .cmp .same { color: var(--dim); }
-  #ttk:empty { display: none; }
-  #ttk { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
-  .ttk-title { font-size: 11px; color: var(--accent); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
-  .ttk-row { display: grid; grid-template-columns: 1fr repeat(5, 54px); align-items: center; font-size: 15px;
-             line-height: 1.2; padding: 3px 0; font-variant-numeric: tabular-nums; }
-  .ttk-row.cols { font-size: 9px; color: var(--dim); letter-spacing: .5px; }
-  .ttk-row > span:not(:first-child) { text-align: center; }
-  .ttk-row b { display: block; font-weight: 600; font-size: 16px; }
-  .ttk-row small { display: block; color: var(--dim); font-size: 11px; }
-  .ttk-row.chosen > span:first-child { color: var(--accent); font-weight: 600; }
+  .sep { border-top: 1px solid var(--line); margin: 8px 0; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; }
+  .weapon { font-size: 29px; font-weight: 700; line-height: 1; letter-spacing: .3px; }
+  .check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--dim); margin-top: 8px; }
+  .check.on { color: var(--accent); }
+  .sq { width: 12px; height: 12px; border: 1px solid #6d7560; box-sizing: border-box; display: inline-block; }
+  .on .sq { background: var(--accent); border-color: var(--accent); }
+  .base { font-size: 13px; color: var(--dim); margin-top: 10px; }
+  .line { display: grid; grid-template-columns: 78px 1fr; align-items: baseline; font-size: 15px; line-height: 22px; }
+  .line .slot { font-size: 11px; color: var(--dim); text-transform: uppercase; }
+  .line .gone { color: var(--dim); text-decoration: line-through; }
+  .line .came { color: var(--accent); font-weight: 700; }
+  .line .dim { color: var(--dim); }
+  .line .note { color: var(--dim); font-size: 12px; line-height: 16px; }
+  .row { display: grid; align-items: center; font-size: 15px; line-height: 24px; font-variant-numeric: tabular-nums; }
+  .plain { grid-template-columns: 168px 110px 1fr; }
+  .pair { grid-template-columns: 152px 50px 1fr 64px; }
+  .cmp { grid-template-columns: 1fr 84px 84px; }
+  .r { text-align: right; } .b { font-weight: 700; }
+  .good { color: var(--good); } .bad { color: var(--bad); } .dim { color: var(--dim); } .acc { color: var(--accent); }
+  .small-head { font-size: 9px; font-weight: 700; line-height: 15px; letter-spacing: .3px; }
+  .bar { position: relative; height: 6px; background: var(--track); }
+  .bar .mid { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: #777; }
+  .bar .fill { position: absolute; top: 0; bottom: 0; }
+  .bar .mark { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--accent); }
+  .adv { font-size: 13px; text-align: right; }
+  .smith-head { display: flex; justify-content: space-between; align-items: center; margin: 2px 0 6px; }
+  .modes { display: flex; gap: 4px; }
+  .modes span { font-size: 11px; font-weight: 700; padding: 1px 6px; border: 1px solid #5b6250; color: var(--dim); }
+  .modes span.on { background: var(--accent); border-color: var(--accent); color: #0e100c; }
+  .adv-row { display: grid; grid-template-columns: 78px 1fr; align-items: baseline; font-size: 15px; line-height: 21px; }
+  .adv-row .slot { font-size: 11px; color: var(--dim); }
+  .adv-row .ok { color: var(--good); font-weight: 700; }
+  .adv-now { margin-left: 78px; font-size: 12px; color: var(--accent); line-height: 17px; }
+  .hint { margin-left: 78px; font-size: 11px; color: var(--dim); line-height: 18px; }
+  .ttk-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .ttk-title { font-size: 11px; font-weight: 700; color: var(--accent); }
+  .dists { display: flex; gap: 4px; }
+  .dists span { font-size: 11px; font-weight: 700; padding: 0 6px; border: 1px solid #5b6250; color: var(--dim); }
+  .dists span.on { background: var(--accent); border-color: var(--accent); color: #0e100c; }
+  .hold { font-size: 11px; font-weight: 700; color: var(--good); }
+  .ttk { display: grid; grid-template-columns: 96px repeat(5, 1fr); align-items: center; text-align: center; font-variant-numeric: tabular-nums; }
+  .ttk.cols span { font-size: 9px; color: var(--dim); padding-bottom: 2px; }
+  .ttk .lab { text-align: left; font-size: 15px; white-space: nowrap; }
+  .ttk .lab.sel { color: var(--accent); font-weight: 700; }
+  .ttk b { display: block; font-size: 16px; line-height: 20px; }
+  .ttk small { display: block; font-size: 11px; color: var(--dim); line-height: 14px; padding-bottom: 4px; }
+  .ttk .best b, .ttk .best small { color: var(--good); }
+  .note { font-size: 13px; color: var(--dim); margin: 2px 0 4px; }
+  .data { font-size: 9px; color: var(--dim); margin-top: 6px; }
 </style>
 </head>
 <body>
-<div id="panel">
-  <div class="head"><div class="weapon" id="weapon"></div><div class="cls" id="cls"></div></div>
-  <div class="base" id="base"></div>
-  <div class="atts" id="atts"></div>
-  <div id="stats"></div>
-  <div id="ttk"></div>
-  <div class="src">Данные: metaforge.app</div>
-</div>
-
-<script src="wardogs_data.js"></script>
+<div id="panel"></div>
 <script>
-// Перевод статов. better: "low" — чем меньше, тем лучше; "high" — чем больше, тем лучше; null — просто показать.
-const STATS = {
-  "ADS zoom":                      ["Зум прицела", null],
-  "Vertical recoil":              ["Отдача вверх", "low"],
-  "Horizontal recoil":             ["Отдача вбок", "low"],
-  "Spread":                        ["Разброс", "low"],
-  "ADS time":                      ["Время прицеливания", "low"],
-  "Aim sway":                      ["Качание прицела", "low"],
-  "Equip speed":                   ["Скорость доставания", "high"],
-  "Stabilisation time":            ["Время стабилизации", "low"],
-  "Sway speed":                    ["Скорость качания", "low"],
-  "Sway from horizontal movement": ["Качание при стрейфе", "low"],
-  "Sway from vertical movement":   ["Качание в прыжке", "low"],
-  "Translation stabilisation":     ["Стабилиз. в движении", "low"],
-  "Rotation stabilisation":        ["Стабилиз. при повороте", "low"],
-};
-const ORDER = Object.keys(STATS);
-const SLOT_RU = { Optic: "Прицел", Muzzle: "Дуло", Suppressor: "Глушитель", Foregrip: "Рукоять", Magazine: "Магазин", Bipod: "Сошки", Ammunition: "Магазин" };
-const CLASS_RU = { "Assault Rifle": "Штурмовая", "Submachine Gun": "ПП", "Sniper Rifle": "Снайперка", "Marksman Rifle": "Марксман", "Light Machine Gun": "Пулемёт", "Pistol": "Пистолет", "Shotgun": "Дробовик", "Launcher": "Гранатомёт", "Bow": "Лук" };
-const MAX_ROWS = 10;
-
-const weapons = Object.fromEntries(WARDOGS.W.map(w => [w[0], w]));
-const atts = Object.fromEntries(WARDOGS.A.map(a => [a[0], a]));
-
 const params = new URLSearchParams(location.search);
 if (params.get("side") === "right") document.body.classList.add("right");
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-// Во сколько раз обвесы меняют каждый стат (как в игре: (родное или заменённое + прибавки) × множители).
-function totals(names, w) {
-  const mult = {}, over = {}, add = {};
-  for (const a of names.map(n => atts[n]).filter(Boolean)) for (const [attr, v, op] of a[2]) {
-    if (op === "=") over[attr] = v;
-    else if (op === "+") add[attr] = (add[attr] ?? 0) + v;
-    else mult[attr] = (mult[attr] ?? 1) * v;
+// полоска стата: + вправо (лучше), − влево (хуже); f — доля половины полоски
+function bar(f, tone, mark) {
+  let html = `<span class="bar"><i class="mid"></i>`;
+  if (f) html += `<i class="fill" style="${f > 0 ? `left:50%;width:${f * 50}%` : `right:50%;width:${-f * 50}%`};background:var(--${tone === "bad" ? "bad" : "good"})"></i>`;
+  if (mark !== undefined && mark !== null) html += `<i class="mark" style="left:calc(${50 + mark * 50}% - 1px)"></i>`;
+  return html + `</span>`;
+}
+
+function stats(v) {
+  const s = v.stats;
+  if (!s) return "";
+  let h = "";
+  if (s.kind === "pair")
+    h += `<div class="row pair small-head"><span></span><span></span><span class="r acc">${esc(s.head[0])}</span><span class="r dim">${esc(s.head[1])}</span></div>` +
+      s.rows.map(r => `<div class="row pair"><span>${esc(r.label)}</span>${bar(r.bar, r.tone, r.adv_on ? r.mark : null)}` +
+        `<span class="adv ${r.adv_on ? "acc b" : "dim"}">${esc(r.adv)}</span><span class="r b ${r.tone}">${esc(r.now)}</span></div>`).join("");
+  else if (s.kind === "compare")
+    h += `<div class="row cmp small-head"><span class="acc">${esc(s.head[0])}</span><span class="r dim">${esc(s.head[1])}</span><span class="r dim">${esc(s.head[2])}</span></div>` +
+      s.rows.map(r => `<div class="row cmp"><span>${esc(r.label)}</span><span class="r dim" style="font-size:13px">${esc(r.was)}</span><span class="r b ${r.tone}">${esc(r.now)}</span></div>`).join("");
+  else
+    h += s.rows.map(r => `<div class="row plain"><span>${esc(r.label)}</span>${r.tone === "dim" || r.tone === "text" ? "<span></span>" : bar(r.bar, r.tone)}` +
+      `<span class="r b ${r.tone === "text" ? "" : r.tone}">${esc(r.now)}</span></div>`).join("");
+  if (!s.rows.length) h += `<div class="row dim">${esc(v.empty)}</div>`;
+  return h;
+}
+
+function smith(m) {
+  if (!m) return "";
+  let h = `<div class="sep"></div><div class="smith-head"><span class="check ${m.on ? "on" : ""}" style="margin:0"><i class="sq"></i>${esc(m.title)}</span>`;
+  if (m.on) h += `<span class="modes">${m.modes.map((n, i) => `<span class="${i === m.mode ? "on" : ""}">${esc(n)}</span>`).join("")}</span>`;
+  h += `</div>`;
+  if (!m.on) return h;
+  for (const a of m.advice) {
+    h += `<div class="adv-row"><span class="slot">${esc(a.slot)}</span><span class="${a.ok ? "ok" : ""}">${a.ok ? "✓ " : ""}${esc(a.best)}</span></div>`;
+    if (a.now) h += `<div class="adv-now">${esc(a.now)}</div>`;
   }
-  const adsBase = w[5] ? parseFloat(w[5]) : NaN;
-  const total = {};
-  for (const attr of new Set([...Object.keys(mult), ...Object.keys(over), ...Object.keys(add)])) {
-    const base = attr === "ADS time" && !isNaN(adsBase) ? adsBase : 1;
-    total[attr] = (((attr in over) ? over[attr] : base) + (add[attr] ?? 0)) * (mult[attr] ?? 1) / base;
-  }
-  return total;
-}
-const sameSet = (a, b) => a.length === b.length && a.every(x => b.includes(x));
-
-// Сравнение с запомненной сборкой (Ctrl+Shift+S): «было → сейчас».
-function compareView(state) {
-  const cur = state.attachments || [];
-  if (Array.isArray(state.saved) && !sameSet(state.saved, cur))
-    return { kind: "saved", old: state.saved, now: cur, gone: state.saved.filter(n => !cur.includes(n)), came: cur.filter(n => !state.saved.includes(n)) };
-  return null;
+  if (m.nothing) h += `<div class="hint">${esc(m.nothing)}</div>`;
+  return h + `<div class="hint">${esc(m.hint)}</div>`;
 }
 
-function statText(k, m, w) {
-  const adsBase = w[5] ? parseFloat(w[5]) : NaN;
-  if (k === "ADS zoom") return m === undefined ? "—" : `${+m.toFixed(1)}×`;
-  if (k === "ADS time" && !isNaN(adsBase)) return `${(adsBase * m).toFixed(2).replace(".", ",")} с`;
-  const pct = Math.round((m - 1) * 100);
-  return `${pct > 0 ? "+" : pct < 0 ? "−" : "±"}${Math.abs(pct)}%`;
+function ttk(t) {
+  if (!t || !t.rows || !t.rows.length) return "";
+  let h = `<div class="sep"></div><div class="ttk-head"><span class="ttk-title">${esc(t.title)}</span>`;
+  if (t.buttons && t.buttons.length) h += `<span class="dists">${t.buttons.map(d => `<span class="${d === t.dist ? "on" : ""}">${d} ${esc(t.unit)}</span>`).join("")}</span>`;
+  else if (t.hold) h += `<span class="hold">${esc(t.hold)}</span>`;
+  h += `</div><div class="ttk cols"><span></span>${t.cols.map(c => `<span>${esc(c)}</span>`).join("")}</div>`;
+  for (const [label, cells, sel] of t.rows)
+    h += `<div class="ttk"><span class="lab ${sel ? "sel" : ""}">${sel ? "▶ " : ""}${esc(label)}</span>` +
+      cells.map(c => c ? `<span class="${c[2] ? "best" : ""}"><b>${esc(c[0])}</b><small>${esc(c[1])}</small></span>` : `<span class="dim">—</span>`).join("") + `</div>`;
+  if (t.note) h += `<div class="note">${esc(t.note)}</div>`;
+  return h;
 }
 
-function renderCompare(state, w, v) {
-  const shown = state.attachments || [];
-  const all = shown.concat(v.gone.filter(n => !shown.includes(n)));
-  document.getElementById("atts").innerHTML = all.map(n => atts[n]).filter(Boolean).map(a => {
-    const cls = v.gone.includes(a[0]) ? "gone" : v.came.includes(a[0]) ? "came" : "";
-    return `<div class="att"><span class="slot">${SLOT_RU[a[1]] || a[1]}</span><span class="${cls}">${v.came.includes(a[0]) ? "→ " : ""}${a[0]}</span></div>`;
-  }).join("") || `<div class="none">Без обвесов</div>`;
-  const tOld = totals(v.old, w), tNew = totals(v.now, w);
-  const head = ["С запомненной", "было", "сейчас"];
-  const rows = ORDER.filter(k => Math.abs((tOld[k] ?? 1) - 1) >= 0.005 || Math.abs((tNew[k] ?? 1) - 1) >= 0.005).slice(0, MAX_ROWS + 2).map(k => {
-    const [ru, better] = STATS[k];
-    // зум задаёт прицел; у некоторых (Spectr 4x) в базе его нет — показываем «—», а не «1×»
-    const a = k === "ADS zoom" ? tOld[k] : (tOld[k] ?? 1), b = k === "ADS zoom" ? tNew[k] : (tNew[k] ?? 1);
-    const was = statText(k, a, w), now = statText(k, b, w);
-    const verdict = !better || was === now ? 0 : ((b < a) === (better === "low") ? 1 : -1);
-    const name = k === "ADS time" && w[5] ? "Прицеливание" : ru;
-    const cls = verdict > 0 ? "good" : verdict < 0 ? "bad" : was === now ? "same" : "neutral";
-    return `<div class="cmp"><span class="${verdict ? "" : "same"}">${name}</span><span class="was">${was}</span><span class="arr">→</span><span class="now ${cls}">${now}${verdict > 0 ? " ▲" : verdict < 0 ? " ▼" : ""}</span></div>`;
-  });
-  document.getElementById("stats").innerHTML =
-    `<div class="cmp-head"><b>${head[0]}</b><span style="text-align:right">${head[1]}</span><span></span><span style="text-align:right">${head[2]}</span></div>` +
-    (rows.join("") || `<div class="none">Обвесы не меняют статы</div>`);
-}
-
-// TTK (считает программа): сколько попаданий и секунд до убийства — строки × без брони/броня 2/броня 4.
-// Выбранные патроны (вкладка «Боеприпасы») подсвечены.
-function renderTTK(t) {
-  const el = document.getElementById("ttk");
-  if (!t || !t.rows) { el.innerHTML = ""; return; }
-  const fastest = t.cols.map((_, i) => Math.min(...t.rows.map(r => r[1][i][1]).filter(x => x != null)));
-  const cell = ([shots, secs], i) => shots == null ? `<span class="same">—</span>`
-    : `<span class="${t.best && secs === fastest[i] ? "good" : ""}"><b>${shots}×</b><small${t.best && secs === fastest[i] ? ' class="good"' : ""}>${secs.toFixed(2).replace(".", ",")} с</small></span>`;
-  // подписи колонок короче — пять колонок должны влезть в 380 px
-  t = { ...t, cols: t.cols.map(c => c.replace("БЕЗ БРОНИ", "БЕЗ").replace("БРОНЯ ", "БР. ")) };
-  el.innerHTML = `<div class="ttk-title">${t.title}</div>` +
-    `<div class="ttk-row cols"><span></span>${t.cols.map(c => `<span>${c}</span>`).join("")}</div>` +
-    t.rows.map(([label, cells, chosen]) => `<div class="ttk-row${chosen ? " chosen" : ""}"><span>${chosen ? "▶ " : ""}${label}</span>${cells.map(cell).join("")}</div>`).join("");
-}
-
-const AMMO_RU = { FMJ: "обычные (FMJ)", HollowPoint: "экспансивные (HP)", ArmorPiercing: "бронебойные (AP)" };
-const AMMO_NOTE = { FMJ: "ровный урон по всем целям", HollowPoint: "больше урона по телу, намного хуже по броне",
-                    ArmorPiercing: "лучше по броне, чуть меньше урона без неё" };
-
-function render(state) {
+function render(v) {
   const panel = document.getElementById("panel");
-  const w = state && weapons[state.weapon];
-  if (!w) { panel.classList.remove("show"); return; }
-  renderTTK(state.ttk);
-  if (state.tab === "ammo") {   // вкладка «Боеприпасы»: магазин и патроны, TTK по видам патронов
-    document.getElementById("weapon").textContent = w[0];
-    document.getElementById("cls").textContent = CLASS_RU[w[1]] || w[1] || "";
-    document.getElementById("base").textContent =
-      [w[2] && `Урон ${w[2]}`, w[3] && w[3].replace("rpm", "в/мин"), w[4] && `Дальность ${w[4].replace(" m", " м")}`]
-        .filter(Boolean).join("  ·  ");
-    const mag = (state.attachments || []).map(n => atts[n]).filter(Boolean);
-    document.getElementById("atts").innerHTML =
-      (mag.length ? mag.map(a => `<div class="att"><span class="slot">Магазин</span><span>${a[0]}</span></div>`).join("")
-                  : `<div class="none">Магазин ещё не выбран</div>`) +
-      `<div class="att"><span class="slot">Патроны</span><span class="${state.ammo ? "" : "none"}">${AMMO_RU[state.ammo] || "ещё не выбраны"}</span></div>` +
-      (AMMO_NOTE[state.ammo] ? `<div class="att"><span class="slot"></span><span class="none">${AMMO_NOTE[state.ammo]}</span></div>` : "");
-    document.getElementById("stats").innerHTML = "";
-    panel.classList.add("show");
-    return;
-  }
-
-  document.getElementById("weapon").textContent = w[0];
-  document.getElementById("cls").textContent = CLASS_RU[w[1]] || w[1] || "";
-  document.getElementById("base").textContent =
-    [w[2] && `Урон ${w[2]}`, w[3] && w[3].replace("rpm", "в/мин"), w[4] && `Дальность ${w[4].replace(" m", " м")}`, w[5] && `Прицел. ${w[5].replace("s", " с")}`]
-      .filter(Boolean).join("  ·  ");
-
-  const view = compareView(state);
-  if (view) { renderCompare(state, w, view); panel.classList.add("show"); return; }
-
-  const list = (state.attachments || []).map(n => atts[n]).filter(Boolean);
-  const attsEl = document.getElementById("atts");
-  attsEl.innerHTML = list.length
-    ? list.map(a => `<div class="att"><span class="slot">${SLOT_RU[a[1]] || a[1]}</span><span>${a[0]}</span></div>`).join("")
-    : `<div class="none">Без обвесов</div>`;
-  if (AMMO_RU[state.ammo]) attsEl.innerHTML += `<div class="att"><span class="slot">Патроны</span><span>${AMMO_RU[state.ammo]}</span></div>`;
-
-  // Эффект: [стат, значение] — умножить; [.., "="] — заменить; [.., "+"] — прибавить.
-  // Итог как в игре: (родное или заменённое + прибавки) × множители; храним «во сколько раз изменилось».
-  const mult = {}, over = {}, add = {};
-  for (const a of list) for (const [attr, v, op] of a[2]) {
-    if (op === "=") over[attr] = v;
-    else if (op === "+") add[attr] = (add[attr] ?? 0) + v;
-    else mult[attr] = (mult[attr] ?? 1) * v;
-  }
-  const adsBase = w[5] ? parseFloat(w[5]) : NaN;
-  const total = {};
-  for (const attr of new Set([...Object.keys(mult), ...Object.keys(over), ...Object.keys(add)])) {
-    const base = attr === "ADS time" && !isNaN(adsBase) ? adsBase : 1;
-    total[attr] = (((attr in over) ? over[attr] : base) + (add[attr] ?? 0)) * (mult[attr] ?? 1) / base;
-  }
-
-  const rows = ORDER.filter(k => total[k] !== undefined && Math.abs(total[k] - 1) >= 0.005)
-    .map(k => ({ k, m: total[k] }))
-    .slice(0, MAX_ROWS);  // порядок — как в STATS: сначала самое важное
-
-  // Время прицеливания — в секундах: у пушки есть родное время (AK74 — 0.45 с), обвесы его умножают
-  const baseAds = w[5] ? parseFloat(w[5]) : NaN;
-  const sec = x => x.toFixed(2).replace(".", ",");
-  document.getElementById("stats").innerHTML = rows.map(({ k, m }) => {
-    let [name, better] = STATS[k];
-    if (!better) return `<div class="stat"><span>${name}</span><span></span><span class="val neutral">${+m.toFixed(1)}×</span></div>`;
-    const pct = Math.round((m - 1) * 100);
-    let valueText = null;
-    if (k === "ADS time" && !isNaN(baseAds)) {
-      const now = Math.round(baseAds * m * 100) / 100, diff = now - Math.round(baseAds * 100) / 100;
-      name = `Прицел. ${sec(baseAds)}→${sec(now)} с`;
-      valueText = `${diff > 0 ? "+" : diff < 0 ? "−" : "±"}${sec(Math.abs(diff))} с`;
-    }
-    const good = better === "low" ? pct < 0 : pct > 0;
-    const cls = good ? "good" : "bad";
-    const width = Math.min(50, Math.abs(pct) * 1.25);
-    const color = good ? "var(--good)" : "var(--bad)";
-    // Хорошее растёт вправо, плохое влево.
-    const pos = good ? `left:50%;width:${width}%` : `right:50%;width:${width}%`;
-    return `<div class="stat"><span>${name}</span><span class="bar"><i class="mid"></i><i style="${pos};background:${color}"></i></span><span class="val ${cls}">${valueText || (pct > 0 ? "+" : "−") + Math.abs(pct) + "%"}</span></div>`;
-  }).join("") || `<div class="none">Обвесы не меняют статы</div>`;
-
+  if (!v) { panel.classList.remove("show"); return; }
+  document.documentElement.lang = v.lang || "ru";
+  panel.innerHTML =
+    `<div class="head"><span class="weapon">${esc(v.weapon)}</span><span class="check ${v.detail ? "on" : ""}"><i class="sq"></i>${esc(v.detail_text)}</span></div>` +
+    `<div class="base">${esc(v.base)}</div><div class="sep"></div>` +
+    v.lines.map(l => l.slot || l.st === "note"
+      ? `<div class="line"><span class="slot">${esc(l.slot)}</span><span class="${l.st}">${esc(l.text)}</span></div>`
+      : `<div class="line"><span class="${l.st}" style="grid-column:1/-1">${esc(l.text)}</span></div>`).join("") +
+    `<div class="sep"></div>` + stats(v) + smith(v.smith) + ttk(v.ttk) + `<div class="data">${esc(v.data)}</div>`;
   panel.classList.add("show");
 }
 
-// Демо-режим: overlay.html?demo (?demo=saved — сравнение с запомненной сборкой)
-if (params.get("demo") === "ammo") {   // ?demo=ammo — вкладка «Боеприпасы»
-  render({ weapon: "Galil", attachments: ["Galil 50 RND Magazine"], tab: "ammo", ammo: "HollowPoint",
-           ttk: { title: "TTK в тело  ·  50 м  ·  какие патроны лучше", cols: ["БЕЗ БРОНИ", "БРОНЯ 2", "БРОНЯ 4"], best: true,
-                  rows: [["Обычные", [[4, 0.33], [7, 0.61], [10, 0.89]], false], ["HP", [[2, 0.15], [17, 1.53], [40, 3.65]], true],
-                         ["AP", [[5, 0.42], [7, 0.61], [8, 0.7]], false]] } });
-} else if (params.has("demo")) {
-  render({ weapon: "AK74", attachments: ["CQB 74 Brake", "RK6 Tactical Foregrip", "2.5x Combat Optic", "AK74 60 RND Magazine"],
-           saved: params.get("demo") === "saved" ? ["PBS-4 Suppressor", "RK6 Tactical Foregrip", "2.5x Combat Optic", "AK74 60 RND Magazine"] : null,
-           ttk: { title: "TTK  ·  50 м  ·  обычные патроны", cols: ["БЕЗ БРОНИ", "БРОНЯ 2", "БРОНЯ 4"],
-                  rows: [["Тело", [[4, 0.34], [7, 0.61], [10, 0.89]], false], ["Голова", [[2, 0.15], [3, 0.24], [5, 0.43]], false]] } });
-} else {
-  let last = "";
-  async function poll() {
-    try {
-      const r = await fetch("/state", { cache: "no-store" });
-      const txt = await r.text();
-      if (txt !== last) { last = txt; render(JSON.parse(txt)); }
-    } catch (e) { /* программа распознавания не запущена — просто ждём */ }
-    setTimeout(poll, 500);
-  }
-  poll();
+let last = "";
+async function poll() {
+  try {
+    const r = await fetch("/state" + (params.has("demo") ? "?demo=" + encodeURIComponent(params.get("demo") || "1") : ""), { cache: "no-store" });
+    const txt = await r.text();
+    if (txt !== last) { last = txt; render(JSON.parse(txt).view); }
+  } catch (e) { /* программа не запущена — просто ждём */ }
+  setTimeout(poll, 500);
 }
+poll();
 </script>
 </body>
 </html>

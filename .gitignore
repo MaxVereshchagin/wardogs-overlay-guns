@@ -35,3 +35,6 @@ tests/run_*.txt
 tests/report_*.txt
 tests/*.log
 tests/run_output*.txt
+
+# Скриншоты английской игры (2.0)
+tests/en_screens/

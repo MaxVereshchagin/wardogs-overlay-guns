@@ -51,6 +51,15 @@ EXPECTED = {
     # с деньгами: длинные ценники «$112», «$790», «$800» над иконками (раньше закрывали часть иконки)
     "13_live.jpg": ("Galil", {"Galil 35 RND Magazine", "Spitfire 3X", "AFG Angled Foregrip"}),
 }
+# 2.0: игра на английском (скриншоты Макса 01.11, 1920×1080) — меню ATTACHMENTS / EQUIPMENT SLOTS
+EXPECTED.update({
+    "en/en_137.webp": ("AK74", {"AK74 30 RND Magazine", "Four Reticle Reflex", "45° Angled Foregrip", "CQB 74 Brake"}),
+    "en/en_138.webp": ("AK74", {"AK74 30 RND Magazine", "2.5x Combat Optic", "AFG Angled Foregrip", "Ballista Brake"}),
+    "en/en_139.webp": ("AK74", {"AK74 30 RND Magazine", "Tricon 1.5x Compact Prism Scope", "RK6 Tactical Foregrip",
+                                "Ballista Brake"}),
+    "en/en_140.webp": ("AK74", {"AK74 75 RND Drum Magazine", "Compact P-1 Red Dot", "Hybrid Grip Pod", "PBS-4 Suppressor"}),
+    "en/en_150.webp": ("GGX 18", {"GGX 50 RND Drum Magazine", "Mini Reflex Sight", "Dual Port Brake"}),
+})
 # одинаковые по иконке и статам — считаем одним и тем же
 SAME = {"6-10x Scope MRAD": "6-10x Scope MOA"}
 # снимок «игра + OBS» (игра маленькая, ~0.52): знаем пушку и что обвесы — только из этого набора
@@ -66,6 +75,13 @@ AMMO_CASES = {
     "ammo/m4_02_mag.webp": ("M4", "STANAG 30 RND Magazine", None),
     "ammo/galil_01_empty.webp": ("Galil", None, None),
     "hover/hover_35.webp": ("M4", None, None),
+    # 2.0: игра на английском (// STP 1 - SELECT.MAG; лук и SKS — без шагов)
+    "en/en_120.webp": ("AK74", "AK74 30 RND Magazine", "ArmorPiercing"),
+    "en/en_128.webp": ("M4", "STANAG 60 RND Magazine", "FMJ"),
+    "en/en_149.webp": ("GGX 18", "GGX 50 RND Drum Magazine", "ArmorPiercing"),
+    "en/en_125.webp": ("M4", None, None),
+    "en/en_141.webp": ("SKS", None, None),
+    "en/en_142.webp": ("Compound Bow", None, None),
 }
 
 # ---------------------------------------------------------------- варианты картинки (OpenCV + numpy, без Pillow)

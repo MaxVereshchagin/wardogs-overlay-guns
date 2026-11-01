@@ -1,0 +1,108 @@
+WARDOGS OVERLAY 2.0 — attachment buffs and debuffs, TTK, ammo and the Gunsmith
+=================================================================================
+
+What it is: when you build a weapon at the vendor (Equipment → ATTC. or AMMO), a panel appears
+next to the menu: which weapon, which attachments are installed and what they do (good in green,
+bad in red), plus TTK — how many hits and how many seconds it takes to kill.
+Nothing to install — everything is inside WardogsOverlay.exe.
+
+WHAT YOU NEED
+- Windows 10 or 11 (64-bit).
+- Game language: English or Russian — the program reads the vendor menu on screen and figures it out itself.
+- In the game: Settings → Graphics → screen mode «Borderless windowed».
+  In exclusive fullscreen the panel is not visible.
+- Any resolution (720p…4K, 16:10, 21:9) and any monitor — the program finds the game window itself.
+
+LANGUAGE
+- First start — the language of your Windows. Settings → Language: «Русский» or «English».
+  The program restarts after Save.
+
+START
+1. Extract the archive: right click the zip → «Extract All…». Do not run it from inside the zip.
+2. Double click WardogsOverlay.exe. The first start takes 5–10 seconds.
+   You will see «WARDOGS OVERLAY STARTED», and a W icon appears next to the clock.
+   No icon? Click the «^» arrow next to the clock — it may be hidden there.
+If Windows says «Windows protected your PC» — «More info» → «Run anyway»
+(the program is home-made, Windows does not know it).
+
+TRAY ICON (next to the clock)
+  Right click — menu:
+    Menu search (ATTC. / AMMO) — search on/off (Ctrl+Shift+O does the same in game)
+    Update data from MetaForge — fresh stats after game patches
+    Settings…                  — settings window
+    Event log                  — what the program saw, in plain words
+    Open program folder
+    Exit
+  Double click — settings window.
+  A new version is out — a message pops up and the menu gets «★ Download new version»
+  (it opens the Steam guide; the program downloads nothing by itself).
+
+HOW TO USE
+- In the game: Vendor → Equipment → ATTC. (or AMMO). In a second the panel appears on the right.
+  Leave the menu — the panel hides.
+- No menu for 10 seconds — the search pauses and does not use CPU. Ctrl+Shift+O turns it back on.
+
+THE PANEL
+- Weapon, installed attachments and their stats. «Details» (square, top right corner):
+  off — the 4 main stats (vertical recoil, horizontal recoil, spread, ADS time),
+  on — every stat the attachments change.
+- GUNSMITH SUGGESTS — click the square to turn it on/off. It suggests the best muzzle and grip
+  for your weapon. Modes (buttons on the right): Balance — a bit of everything; Recoil — less recoil;
+  ADS — faster aiming. The suggested part turns green with a tick when installed;
+  if another one is installed you see «now: …». Sight and magazine are your choice.
+- While the Gunsmith is on, stats have two columns: NOW (what is installed, updates as soon as you
+  change a part) and SUGGESTED (what you get with the suggestion; grey — the suggestion does not change it).
+  Gunsmith off — one column, as before.
+- You can click only the squares and buttons; the rest of the panel lets clicks through to the game,
+  and the game keeps focus. Your choices are remembered.
+
+TTK (time to kill)
+- Body and head × no armor, armor 1, 2, 3, 4. Big number — hits, small — seconds
+  (fire rate and bullet flight included). Counted with the ammo chosen on the AMMO tab.
+- Distance. Weapons whose damage drops with range (SMGs, pistols, shotguns, bow) get distance buttons,
+  e.g. PP-19 Bizon: 50 · 250 · 300 m (each next one — where it takes more hits). Weapons that keep their damage (assault rifles, LMGs, marksman and
+  sniper rifles) show a green «Damage holds up to … m». Default distance — 50 m.
+- Shotguns: TTK assumes every pellet hits — at range it will be worse in the game.
+  Only buckshot is counted: MetaForge has no ballistics for the rifled slug — it shows «no data».
+- The model matches the calculator at metaforge.app/wardogs/ballistics.
+
+AMMO TAB
+- The panel shows the chosen magazine and ammo: standard (FMJ), hollow point (HP), armor piercing (AP),
+  and TTK to body for all three. Chosen — orange with an arrow, fastest in each column — green.
+  Stats, the Gunsmith and «Details» are here too — you see what to buy in advance.
+
+BUILD COMPARISON
+- Ctrl+Shift+S — save the current build. Change attachments — the panel shows WAS and NOW columns:
+  green — better, red — worse. «Details» and the Gunsmith work here too. Ctrl+Shift+S again — reset. Remembered per weapon until you exit.
+
+CONTROL PANEL — SETTINGS (tray menu → Settings…, or double click the icon)
+  Top: RU / EN and tiles — is the search running (switch), is the game found, what the panel shows,
+  data date («update» link). Below: manual, event log, program folder, links to the guide, Twitch and Telegram.
+  Opacity, Gunsmith, «Details» and the pause timer change at once. Keys (click a tile, then press the keys),
+  OBS, monitor and «show on my screen» are saved and ask for a restart — «Restart» button at the bottom.
+  A key can also be set alone, without Ctrl/Shift/Alt: F1–F12, Insert, Home, End, Page Up/Down, Pause,
+  Scroll Lock, numpad digits. Letters and digits — only with Ctrl, Shift or Alt (otherwise they stop typing).
+  A single search key is taken by the program — it won't work in the game (the tile says so).
+  Everything is stored in settings.json next to the program.
+
+LOG AND TROUBLESHOOTING
+The program always writes a detailed log overlay.log next to itself (in Russian — it is for debugging).
+Over 5 MB the old one becomes overlay.log.1.
+- Weapon not recognized → its name goes to unknown_names.txt.
+- Menu «almost found» → a picture debug_miss.jpg is saved.
+Send overlay.log (and debug_miss.jpg if present) — they show what went wrong.
+
+IS IT SAFE?
+The program only takes screenshots of the game window and draws its own window (like Discord or an FPS counter).
+It does not touch the game: no memory reading, no code injection, game files are not changed.
+
+WHAT'S NEW IN 2.0
+- English: the game menu in English (ATTC. / AMMO) is recognized, and the program itself speaks English.
+- Control panel instead of the settings window; most settings apply at once.
+- A key can be set alone (F1–F12, Insert, Home, End, Page Up/Down, Pause, Scroll Lock, NumPad).
+- The OBS panel shows the same as the in-game panel: Gunsmith, Details, TTK distance, buckshot.
+
+WHAT IS IN THE FOLDER
+  WardogsOverlay.exe          — the program
+  wardogs_data.js, icons.json, icons\ — weapons, attachments, ammo and ballistics (data from metaforge.app)
+  settings.json, recognition_cache.json, события.txt, overlay.log — appear after the first start

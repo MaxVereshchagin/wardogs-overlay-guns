@@ -39,6 +39,22 @@ No memory reading, no injection, game files are not changed. Menu text is found 
 by OCR (RapidOCR), attachments by their icons; stats and TTK come from MetaForge data.
 A detailed log (`overlay.log`) is written next to the program.
 
+What it does — and nothing more:
+- finds the game window by asking Windows for each window's program name with `PROCESS_QUERY_LIMITED_INFORMATION`
+  (this right cannot read or write another process's memory);
+- listens only to its own hotkeys;
+- goes online to only 2 places: the MetaForge database ("Update database") and the Steam guide (new version check);
+- the OBS server listens on `127.0.0.1` only and is off by default.
+
+It does **not** inject into the game, check for virtual machines, scan your files or send any data about you.
+
+Why sandboxes (VirusTotal, ANY.RUN) show notes: the exe is a PyInstaller one-file build — it unpacks itself to a temp
+folder and starts a second copy ("suspended process", "debugger check"); the "VMware / QEMU strings" sit inside
+OpenCV's ffmpeg library (VMware video codec); "calls WMI" is Python asking for the Windows version.
+[VirusTotal, v2.0](https://www.virustotal.com/gui/file/88b510f4d9d3abe80b15f61ef15ee4bf434c443c6c3e98cc5df693faac9ea04d):
+66 of 68 engines clean; Bkav and McAfee Scanner give a generic "suspicious" for an unsigned program.
+Download only from this repository's Releases or the Steam guide — there is an unrelated program with a similar name.
+
 Requirements: Windows 10/11 64-bit.
 
 ---
@@ -102,6 +118,21 @@ Requirements: Windows 10/11 64-bit.
   обвесы, магазины и коробки патронов узнаёт по иконкам, статы и TTK считает по данным MetaForge.
 - **В игру не лезет**: не читает память, не меняет файлы — только смотрит на картинку, как OBS или Discord.
 - Пишет подробный журнал (`overlay.log`) и понятный журнал событий (`события.txt`) рядом с программой.
+
+### Безопасность
+
+- Окно игры ищет так: спрашивает у Windows имя программы каждого окна с правом `PROCESS_QUERY_LIMITED_INFORMATION` —
+  с ним нельзя ни прочитать, ни изменить память чужой программы.
+- Слушает только свои клавиши. В интернет ходит только в 2 места: база MetaForge («Обновить базу») и руководство Steam (проверка версии).
+- Сервер для OBS — только `127.0.0.1`, по умолчанию выключен.
+- **Не** инжектится в игру, **не** проверяет виртуальную машину, **не** сканирует файлы и **не** отправляет данные о тебе.
+
+Почему песочницы (VirusTotal, ANY.RUN) пишут пометки: exe собран PyInstaller'ом в один файл — распаковывается во временную
+папку и запускает вторую копию («приостановленный процесс», «проверка отладчика»); «строки VMware / QEMU» лежат внутри
+видеобиблиотеки ffmpeg из OpenCV (видеокодек VMware); «вызывает WMI» — так Python узнаёт версию Windows.
+[VirusTotal, версия 2.0](https://www.virustotal.com/gui/file/88b510f4d9d3abe80b15f61ef15ee4bf434c443c6c3e98cc5df693faac9ea04d):
+66 из 68 антивирусов — чисто; Bkav и McAfee Scanner пишут общее «подозрительно» у программы без подписи.
+Скачивай только из Releases этого репозитория или по ссылке из руководства Steam — есть другая программа с похожим названием.
 
 Требования: Windows 10/11 64 бит, игра на **русском или английском** языке.
 

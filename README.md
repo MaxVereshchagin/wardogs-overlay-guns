@@ -11,7 +11,7 @@ Works with the **English and Russian** game; the program itself speaks both (RU 
 
 ### Download and run
 
-1. Open **[Releases](../../releases)** and download `WardogsOverlay_v2.0.zip`.
+1. Open **[Releases](../../releases)** and download `WardogsOverlay_v2.0.1.zip`.
 2. Extract it (right click → «Extract All…»). Don't run it from inside the zip.
 3. Run **`WardogsOverlay.exe`**. Nothing to install. A **W** icon appears next to the clock.
 4. In the game: screen mode **«Borderless windowed»**, then **Equipment Vendor → Equipment → ATTC.** or **AMMO**.
@@ -82,7 +82,7 @@ Requirements: Windows 10/11 64-bit.
 
 ### Скачать и запустить
 
-1. Открой **[Releases](../../releases)** и скачай `WardogsOverlay_v2.0.zip`.
+1. Открой **[Releases](../../releases)** и скачай `WardogsOverlay_v2.0.1.zip`.
 2. Распакуй (правой кнопкой → «Извлечь всё…»). Из самого архива не запускай.
 3. Запусти **`WardogsOverlay.exe`**. Ничего ставить не нужно. У часов появится значок **W**.
 4. В игре: режим экрана **«Оконный без рамки»**, затем **Продавец → Экипировка → Модули** или **Боеприпасы**.

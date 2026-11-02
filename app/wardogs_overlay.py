@@ -42,7 +42,7 @@ if FROZEN and len(sys.argv) == 1:              # двойной щелчок п�
     sys.argv.append("--tray")
 import server  # noqa: E402
 
-VERSION = "2.0"
+VERSION = "2.0.1"
 LANG = {"code": "ru"}     # язык интерфейса для игрока: "ru" / "en" (настройка "language": auto / ru / en)
 
 
@@ -1491,6 +1491,7 @@ class OverlayWindow:
         import tkinter as tk
         self.tk = tk
         self.root = tk.Tk()
+        self.fix_dpi()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.attributes("-alpha", settings["opacity"])
@@ -1520,6 +1521,15 @@ class OverlayWindow:
         self.catching = False
         self.canvas.bind("<Button-1>", self._on_click)
         self.root.after(80, self._watch_mouse)
+
+    def fix_dpi(self):
+        """Шрифты как при масштабе Windows 100 %. Размеры шрифтов у нас в пунктах, а ширина плашки и все координаты —
+        в пикселях: при 150 % Tk делал буквы в 1,5 раза крупнее, а место под них оставалось прежним — текст вылезал
+        за край, кнопки наезжали на надписи (скрин подписчика 02.11). Пульт — окно того же Tk, ему тоже помогает."""
+        was = float(self.root.tk.call("tk", "scaling"))
+        self.root.tk.call("tk", "scaling", 96 / 72)
+        log.info("Масштаб шрифтов Tk: был %.3f (≈ %d %% Windows) -> %.3f (как при 100 %%)", was, round(was * 72 / 96 * 100),
+                 96 / 72)
 
     def flash(self, title, subtitle, seconds=8):
         """Плашка «программа запущена» — висит несколько секунд, чтобы точно заметить."""

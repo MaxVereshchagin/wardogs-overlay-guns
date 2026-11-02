@@ -51,7 +51,7 @@ It does **not** inject into the game, check for virtual machines, scan your file
 Why sandboxes (VirusTotal, ANY.RUN) show notes: the exe is a PyInstaller one-file build — it unpacks itself to a temp
 folder and starts a second copy ("suspended process", "debugger check"); the "VMware / QEMU strings" sit inside
 OpenCV's ffmpeg library (VMware video codec); "calls WMI" is Python asking for the Windows version.
-[VirusTotal, v2.0](https://www.virustotal.com/gui/file/88b510f4d9d3abe80b15f61ef15ee4bf434c443c6c3e98cc5df693faac9ea04d):
+[VirusTotal, v2.0.1](https://www.virustotal.com/gui/file/e76da3e8ef03511ab311ef400fa3420582666964fcf1c6181b1b2b9e1eae3951):
 66 of 68 engines clean; Bkav and McAfee Scanner give a generic "suspicious" for an unsigned program.
 Download only from this repository's Releases or the Steam guide — there is an unrelated program with a similar name.
 
@@ -130,7 +130,7 @@ Requirements: Windows 10/11 64-bit.
 Почему песочницы (VirusTotal, ANY.RUN) пишут пометки: exe собран PyInstaller'ом в один файл — распаковывается во временную
 папку и запускает вторую копию («приостановленный процесс», «проверка отладчика»); «строки VMware / QEMU» лежат внутри
 видеобиблиотеки ffmpeg из OpenCV (видеокодек VMware); «вызывает WMI» — так Python узнаёт версию Windows.
-[VirusTotal, версия 2.0](https://www.virustotal.com/gui/file/88b510f4d9d3abe80b15f61ef15ee4bf434c443c6c3e98cc5df693faac9ea04d):
+[VirusTotal, версия 2.0.1](https://www.virustotal.com/gui/file/e76da3e8ef03511ab311ef400fa3420582666964fcf1c6181b1b2b9e1eae3951):
 66 из 68 антивирусов — чисто; Bkav и McAfee Scanner пишут общее «подозрительно» у программы без подписи.
 Скачивай только из Releases этого репозитория или по ссылке из руководства Steam — есть другая программа с похожим названием.
 

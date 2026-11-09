@@ -59,8 +59,9 @@ It does **not** inject into the game, check for virtual machines, scan your file
 Why sandboxes (VirusTotal, ANY.RUN) show notes: the exe is a PyInstaller one-file build — it unpacks itself to a temp
 folder and starts a second copy ("suspended process", "debugger check"); the "VMware / QEMU strings" sit inside
 OpenCV's ffmpeg library (VMware video codec); "calls WMI" is Python asking for the Windows version.
-[VirusTotal, v2.0.1](https://www.virustotal.com/gui/file/e76da3e8ef03511ab311ef400fa3420582666964fcf1c6181b1b2b9e1eae3951):
-66 of 68 engines clean; Bkav and McAfee Scanner give a generic "suspicious" for an unsigned program.
+[VirusTotal, v2.1](https://www.virustotal.com/gui/file/eca2e71176d18fd0f64ddd8b7d04d0938bd4b41c64ac0142fd0d5b750aa07c1b):
+3 of 69 engines flag the exe, the rest are clean (Kaspersky, ESET, Microsoft, Dr.Web, Avast…); Arctic Wolf, SecureAge and Skyhigh
+give heuristic verdicts ("behaves like…") for an unsigned PyInstaller program.
 Download only from this repository's Releases or the Steam guide — there is an unrelated program with a similar name.
 
 Requirements: Windows 10/11 64-bit.
@@ -146,8 +147,9 @@ Requirements: Windows 10/11 64-bit.
 Почему песочницы (VirusTotal, ANY.RUN) пишут пометки: exe собран PyInstaller'ом (до 2.1 — в один файл, распаковывался во временную
 папку и запускал вторую копию — «приостановленный процесс», «проверка отладчика»); «строки VMware / QEMU» лежат внутри
 видеобиблиотеки ffmpeg из OpenCV (видеокодек VMware); «вызывает WMI» — так Python узнаёт версию Windows.
-[VirusTotal, версия 2.0.1](https://www.virustotal.com/gui/file/e76da3e8ef03511ab311ef400fa3420582666964fcf1c6181b1b2b9e1eae3951):
-66 из 68 антивирусов — чисто; Bkav и McAfee Scanner пишут общее «подозрительно» у программы без подписи.
+[VirusTotal, версия 2.1](https://www.virustotal.com/gui/file/eca2e71176d18fd0f64ddd8b7d04d0938bd4b41c64ac0142fd0d5b750aa07c1b):
+3 из 69 антивирусов отмечают exe, остальные чисто (Kaspersky, ESET, Microsoft, Dr.Web, Avast…); Arctic Wolf, SecureAge и Skyhigh
+ругаются эвристикой («похоже на…») на программу без подписи, собранную PyInstaller'ом.
 Скачивай только из Releases этого репозитория или по ссылке из руководства Steam — есть другая программа с похожим названием.
 
 Требования: Windows 10/11 64 бит, игра на **русском или английском** языке.

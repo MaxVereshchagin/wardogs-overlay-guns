@@ -187,10 +187,13 @@ def main():
     log.info("Пушек у продавца: %d", len(weapons))
 
     # ---- обвесы (только у продавца)
-    atts, icons = [], {}
+    atts, icons, unlocks = [], {}, {}
     for a in items:
         if a.get("tab") != "attachments" or not a.get("inVendor"):
             continue
+        u = a.get("unlock") or {}
+        if u.get("role") and u.get("level"):   # где открывается (2.1: Оружейник советует только открытое)
+            unlocks[a["name"]] = [u["role"], int(u["level"]), u.get("cash")]
         eff, cap = effects_of(stats.get(a["slug"]))
         fits = [slug2name[s] for s in a.get("fits", []) if s in slug2name]
         entry = [a["name"], att_type(a), eff, fits]
@@ -202,7 +205,8 @@ def main():
         if a["slug"] not in stats:
             log.debug("У обвеса %r нет статов на сайте (видимо, ничего не меняет)", a["name"])
     atts.sort(key=lambda x: x[0].lower())
-    log.info("Обвесов у продавца: %d, с иконками: %d", len(atts), len(icons))
+    log.info("Обвесов у продавца: %d, с иконками: %d, открываются на уровне роли: %d (остальные — сразу)",
+             len(atts), len(icons), len(unlocks))
     if len(weapons) < 10 or len(atts) < 50:
         log.error("Подозрительно мало данных — сайт, видимо, отдал что-то не то. Базу НЕ меняю.")
         return 1
@@ -239,12 +243,14 @@ def main():
         log.info("Старая база сохранена как wardogs_data.prev.js")
     payload = {"source": "https://metaforge.app/wardogs/database",
                "generatedAt": db.get("generatedAt"), "statsAt": time.strftime("%Y-%m-%d"),
-               "W": weapons, "A": atts, "B": ballistics_for_ttk(ball, {w[0] for w in weapons})}
+               "W": weapons, "A": atts, "B": ballistics_for_ttk(ball, {w[0] for w in weapons}),
+               "U": unlocks}
     with open(data_path, "w", encoding="utf-8") as f:
         f.write("// База Wardogs для оверлея. Собрана update_database.py с MetaForge — руками не править.\n")
         f.write("// Пушка: [название, класс, урон, скорострельность, дальность, время прицеливания, цена]\n")
         f.write("// Обвес: [название, тип, [[стат, значение, (операция: нет — умножить, '=' — заменить, '+' — прибавить)]],"
                 " [на какие пушки], (ёмкость магазина)]\n")
+        f.write("// U: где открывается обвес {название: [роль, уровень, цена открытия]}; нет в списке — открыт сразу\n")
         f.write("window.WARDOGS = ")
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
         f.write(";\n")

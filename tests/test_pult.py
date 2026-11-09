@@ -31,8 +31,25 @@ def check(name, cond, info=""):
 
 try:
     from PIL import ImageGrab
-except Exception:
-    ImageGrab = None
+    ImageGrab.grab
+except Exception:   # в лёгком Python программы PIL — заглушка: снимаем через mss + OpenCV
+    import cv2
+    import mss
+    import numpy as np
+
+    class _Shot:
+        def __init__(self, box):
+            x0, y0, x1, y1 = box
+            with mss.mss() as sct:
+                self.img = np.array(sct.grab({"left": x0, "top": y0, "width": x1 - x0, "height": y1 - y0}))[:, :, :3]
+
+        def save(self, path):
+            cv2.imencode(".png", self.img)[1].tofile(path)
+
+    class ImageGrab:
+        @staticmethod
+        def grab(box, all_screens=True):
+            return _Shot(box)
 out = os.path.join(HERE, "screens", "pult")
 os.makedirs(out, exist_ok=True)
 cyr = re.compile("[А-Яа-яЁё]")
@@ -81,9 +98,13 @@ for lang in ("ru", "en"):
         rus = [t for t in all_text if cyr.search(t) and t not in ("Русский",)]
         check("EN: нет русских букв", not rus, rus)
     else:
-        check("RU: есть плитки и карточки", all(any(x in t for t in all_text) for x in ("ПОИСК МЕНЮ", "ПЛАШКА", "КЛАВИШИ В ИГРЕ", "РАЗНОЕ")),
+        check("RU: есть плитки и карточки", all(any(x in t for t in all_text) for x in ("ПОИСК МЕНЮ", "ПЛАШКА", "ОРУЖЕЙНИК", "КЛАВИШИ В ИГРЕ", "РАЗНОЕ")),
               all_text[:20])
-    check(f"{lang}: окно влезает в 1080 по высоте", top.winfo_height() <= 990, top.winfo_height())
+    import ctypes   # 2.1: окно растягивается; проверяем, что низ не уходит под панель задач
+    _r = (ctypes.c_long * 4)()
+    ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(_r), 0)
+    check(f"{lang}: окно не уходит под панель задач", top.winfo_rooty() + top.winfo_height() <= _r[3],
+          (top.winfo_rooty() + top.winfo_height(), _r[3]))
     check(f"{lang}: плитка игры «найдена»", any(t in ("Найдена", "Found") for t in all_text))
     check(f"{lang}: плитка плашки M4", any("M4" in t for t in all_text))
     check(f"{lang}: Telegram внизу", "Telegram" in all_text)

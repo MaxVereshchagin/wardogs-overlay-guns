@@ -95,7 +95,12 @@ for name, changes, atts in (("1_выключен", {"gunsmith": False, "detail":
     win.root.update()
     time.sleep(0.3)
     win.root.update()
-    check(f"{name}: есть кликабельные зоны", len(win.zones) == (4 if changes["gunsmith"] else 2), win.zones)
+    base_zones = [z for z in win.zones if "missing" not in z[4]]   # 2.1: «✕ нет у меня» считаем отдельно
+    check(f"{name}: есть кликабельные зоны", len(base_zones) == (4 if changes["gunsmith"] else 2), win.zones)
+    if changes["gunsmith"]:
+        adv_now = wo.gunsmith_advice("M4", atts, changes.get("gunsmith_mode", 0))[0]
+        check(f"{name}: «нет у меня» у каждого непоставленного совета",
+              len(win.zones) - len(base_zones) == sum(1 for _, b, c in adv_now if b != c), win.zones)
     if ImageGrab:
         x, y = win.root.winfo_rootx(), win.root.winfo_rooty()
         ImageGrab.grab((x, y, x + win.W, y + win.canvas.winfo_height()), all_screens=True).save(

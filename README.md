@@ -11,14 +11,22 @@ Works with the **English and Russian** game; the program itself speaks both (RU 
 
 ### Download and run
 
-1. Open **[Releases](../../releases)** and download `WardogsOverlay_v2.0.1.zip`.
+1. Open **[Releases](../../releases)** and download `WardogsOverlay_v2.1.zip`.
 2. Extract it (right click → «Extract All…»). Don't run it from inside the zip.
-3. Run **`WardogsOverlay.exe`**. Nothing to install. A **W** icon appears next to the clock.
+3. Run **`WardogsOverlay.exe`** (keep it together with the `_internal` folder). Nothing to install. The control panel opens and a **W** icon appears next to the clock.
 4. In the game: screen mode **«Borderless windowed»**, then **Equipment Vendor → Equipment → ATTC.** or **AMMO**.
 
 If Windows says «Windows protected your PC» — «More info» → «Run anyway» (the program is home-made and not signed).
 Guide on Steam: [English](https://steamcommunity.com/sharedfiles/filedetails/?id=3831395119) ·
 [Russian](https://steamcommunity.com/sharedfiles/filedetails/?id=3822235930).
+
+### New in 2.1
+
+- **Gunsmith suggests only what you have:** control panel → Gunsmith → «Use my levels» (Career, Assault, Medic, Recon, Support);
+  «✕ don't have» under a suggestion — it suggests the next best. With levels on, one grey line shows the best locked one and where it unlocks.
+- **No more junk in the temp folder:** the program is now a folder (exe + `_internal`), nothing is unpacked on start;
+  leftovers of old versions (~200 MB each) are removed automatically.
+- Control panel opens on start, can be resized (height is remembered); running the exe again just opens the panel.
 
 ### Features (2.0)
 
@@ -82,13 +90,21 @@ Requirements: Windows 10/11 64-bit.
 
 ### Скачать и запустить
 
-1. Открой **[Releases](../../releases)** и скачай `WardogsOverlay_v2.0.1.zip`.
+1. Открой **[Releases](../../releases)** и скачай `WardogsOverlay_v2.1.zip`.
 2. Распакуй (правой кнопкой → «Извлечь всё…»). Из самого архива не запускай.
-3. Запусти **`WardogsOverlay.exe`**. Ничего ставить не нужно. У часов появится значок **W**.
+3. Запусти **`WardogsOverlay.exe`** (рядом с ним должна лежать папка `_internal`). Ничего ставить не нужно. Откроется пульт, у часов появится значок **W**.
 4. В игре: режим экрана **«Оконный без рамки»**, затем **Продавец → Экипировка → Модули** или **Боеприпасы**.
 
 Если Windows покажет «Система Windows защитила ваш компьютер» — «Подробнее» → «Выполнить в любом случае»
 (программа самодельная и не подписана).
+
+### Новое в 2.1
+
+- **Оружейник советует только то, что у тебя есть:** пульт → «Оружейник» → «Учитывать мои уровни» (Карьера, Штурмовик, Медик,
+  Разведчик, Поддержка); «✕ нет у меня» под советом — предложит следующий лучший. С уровнями одной серой строкой видно, какой лучший ещё закрыт и где откроется.
+- **Больше не забивает диск:** программа теперь папка (exe + `_internal`), при запуске ничего не распаковывается во временную папку;
+  мусор старых версий (~200 МБ на каждый запуск) удаляется сам.
+- Пульт открывается при запуске, тянется по высоте (размер запоминается); повторный запуск exe просто открывает пульт.
 
 ### Что умеет (2.0)
 
@@ -127,8 +143,8 @@ Requirements: Windows 10/11 64-bit.
 - Сервер для OBS — только `127.0.0.1`, по умолчанию выключен.
 - **Не** инжектится в игру, **не** проверяет виртуальную машину, **не** сканирует файлы и **не** отправляет данные о тебе.
 
-Почему песочницы (VirusTotal, ANY.RUN) пишут пометки: exe собран PyInstaller'ом в один файл — распаковывается во временную
-папку и запускает вторую копию («приостановленный процесс», «проверка отладчика»); «строки VMware / QEMU» лежат внутри
+Почему песочницы (VirusTotal, ANY.RUN) пишут пометки: exe собран PyInstaller'ом (до 2.1 — в один файл, распаковывался во временную
+папку и запускал вторую копию — «приостановленный процесс», «проверка отладчика»); «строки VMware / QEMU» лежат внутри
 видеобиблиотеки ffmpeg из OpenCV (видеокодек VMware); «вызывает WMI» — так Python узнаёт версию Windows.
 [VirusTotal, версия 2.0.1](https://www.virustotal.com/gui/file/e76da3e8ef03511ab311ef400fa3420582666964fcf1c6181b1b2b9e1eae3951):
 66 из 68 антивирусов — чисто; Bkav и McAfee Scanner пишут общее «подозрительно» у программы без подписи.
@@ -148,11 +164,12 @@ tests/run_tests.py       — прогон по ~1300 вариантам карт
 tests/test_ttk.py        — сверка TTK с эталоном MetaForge (tests/ttk_reference.txt)
 tests/test_ammo.py       — проверка вкладки «Боеприпасы»
 tests/test_gunsmith.py, test_ttk_dist.py, test_english.py, test_pult.py, test_obs.py — оружейник, дистанции, английский, пульт, OBS
+tests/test_smith_levels.py, test_clean_mei.py, test_pult_size.py, test_en_21.py — 2.1: уровни и «нет у меня», чистка _MEI, размер пульта, английский
 ```
 
 Запуск из кода: Python 3.12 с `numpy`, `opencv-python-headless`, `mss`, `rapidocr-onnxruntime`;
 `python app/wardogs_overlay.py --tray` (или `--menu` — консольное меню).
-Сборка в один файл — PyInstaller (`--onefile --windowed`, данные `ref_*.png` и `ref_*_en.png`, `overlay.html`, `overlay.ico`, инструкции).
+Сборка с 2.1 — PyInstaller папкой (onedir: exe + `_internal`, `--windowed`; данные `ref_*.png` и `ref_*_en.png`, `overlay.html`, `overlay.ico`, инструкции).
 
 ## Данные
 

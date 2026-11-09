@@ -20,6 +20,7 @@ import math
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -42,7 +43,7 @@ if FROZEN and len(sys.argv) == 1:              # двойной щелчок п�
     sys.argv.append("--tray")
 import server  # noqa: E402
 
-VERSION = "2.0.1"
+VERSION = "2.1"
 LANG = {"code": "ru"}     # язык интерфейса для игрока: "ru" / "en" (настройка "language": auto / ru / en)
 
 
@@ -181,7 +182,10 @@ DEFAULT_SETTINGS = {
     "gunsmith": False,         # «Оружейник рекомендует»: лучшие обвесы и статы сборки с советом (галочка на плашке)
     "gunsmith_mode": 0,        # что считать лучшим: 0 — баланс, 1 — меньше отдачи, 2 — быстрое ADS (кнопки на плашке)
     "detail": False,           # «Подробно»: все меняющиеся статы; иначе только 4 главных (галочка в углу плашки)
-    "ttk_dist": {},            # выбранная кнопкой дистанция TTK по пушкам, м (у кого урон падает: ПП, пистолеты…)
+    "ttk_dist": {},
+    "levels": None,            # 2.1: мои уровни ролей {"Career": 12, "Infantry": 5, …} — Оружейник советует только открытое (None — не учитывать)
+    "pult_height": None,       # 2.1: высота пульта, которую человек выставил мышкой (None — почти весь экран)
+    "missing": [],             # 2.1: обвесы, на которых нажали «нет у меня» на плашке — Оружейник их не советует            # выбранная кнопкой дистанция TTK по пушкам, м (у кого урон падает: ПП, пистолеты…)
     "language": "auto",        # язык программы: "auto" — как Windows; "ru" — русский; "en" — English
 }
 
@@ -253,7 +257,10 @@ def load_db():
         data = json.loads(js[js.index("{", i): js.rindex("}") + 1])
         log.debug("База: данные MetaForge от %s", data.get("generatedAt"))
         BALL.clear()
-        BALL.update(data.get("B") or {})   # баллистика для TTK (нет в старой базе — TTK не показываем)
+        BALL.update(data.get("B") or {})
+        UNLOCKS.clear()
+        UNLOCKS.update(data.get("U") or {})   # где открывается обвес (2.1; в старой базе нет — уровни не учитываем)
+        log.debug("База: уровни открытия известны у %d обвесов", len(UNLOCKS))   # баллистика для TTK (нет в старой базе — TTK не показываем)
         if not BALL:
             log.warning("В базе нет баллистики — TTK не покажу (обнови базу)")
         return data["W"], data["A"]
@@ -264,6 +271,7 @@ def load_db():
 
 
 BALL = {}   # баллистика MetaForge (для TTK), заполняет load_db
+UNLOCKS = {}   # обвес → [роль, уровень, цена открытия] (MetaForge unlock), заполняет load_db
 W_LIST, A_LIST = load_db()
 
 
@@ -1264,20 +1272,56 @@ GUNSMITH_MODES = (("Баланс", {"Vertical recoil": 0.35, "Horizontal recoil"
                   ("Отдача", {"Vertical recoil": 0.6, "Horizontal recoil": 0.4}),
                   ("ADS", {"ADS time": 0.8, "Spread": 0.2}))
 _GUNSMITH_CACHE = {}
+# Роли, за которые в игре открываются обвесы (unlock.role в MetaForge): (код, по-русски, по-английски, макс. уровень)
+ROLES = (("Career", "Карьера", "Career", 150), ("Infantry", "Штурмовик", "Assault", 50),
+         ("Medic", "Медик", "Medic", 50), ("Recon", "Разведчик", "Recon", 50), ("Support", "Поддержка", "Support", 50))
 
 
-def gunsmith_advice(weapon, installed, mode=0):
+def smith_filter(settings):
+    """Что Оружейнику нельзя советовать (2.1), в виде, годном для кэша: (уровни или None, «нет у меня»)."""
+    lv = settings.get("levels")
+    levels = tuple(sorted((k, int(v or 0)) for k, v in lv.items())) if isinstance(lv, dict) else None
+    return levels, tuple(sorted(settings.get("missing") or []))
+
+
+def smith_available(name, flt):
+    """Можно ли советовать обвес: не отмечен «нет у меня» и (уровни не заданы или роль доросла до уровня открытия)."""
+    levels, missing = flt or (None, ())
+    if name in missing:
+        return False
+    if levels is None or name not in UNLOCKS:
+        return True
+    role, need = UNLOCKS[name][0], UNLOCKS[name][1]
+    return dict(levels).get(role, 0) >= need
+
+
+def unlock_text(name, cash=True):
+    """2.1: где открывается обвес — «Штурмовик 21 · $20 000» (cash=False — без цены); открыт сразу или нет данных — ""."""
+    u = UNLOCKS.get(name)
+    if not u:
+        return ""
+    role = next((T(ru, en) for code, ru, en, _ in ROLES if code == u[0]), u[0])
+    money = f" · ${u[2]:,}".replace(",", " ") if cash and u[2] else ""
+    return f"{role} {u[1]}{money}"
+
+
+def gunsmith_advice(weapon, installed, mode=0, flt=None):
     """Совет оружейника: ([(слот, лучший обвес, что стоит в этом слоте сейчас или None)], сборка с советом).
-    Сборка с советом = то, что стоит, но в советуемых слотах — рекомендованное."""
+    Сборка с советом = то, что стоит, но в советуемых слотах — рекомендованное.
+    flt — smith_filter(настройки): советуем только открытое по уровням и не отмеченное «нет у меня»
+    (то, что уже стоит на пушке, у игрока точно есть — его можно советовать всегда)."""
     mode = mode if 0 <= mode < len(GUNSMITH_MODES) else 0
-    key = (weapon, mode, tuple(sorted(installed)))
+    key = (weapon, mode, tuple(sorted(installed)), flt)
     if key in _GUNSMITH_CACHE:
         return _GUNSMITH_CACHE[key]
     t = time.time()
     weights = GUNSMITH_MODES[mode][1]
     advice, build = [], [n for n in installed]
     for label, types in GUNSMITH_SLOTS:
-        opts = [n for n, a in ATTS.items() if a[1] in types and weapon in a[3]]
+        every = [n for n, a in ATTS.items() if a[1] in types and weapon in a[3]]
+        opts = [n for n in every if n in installed or smith_available(n, flt)]
+        if len(opts) < len(every):
+            log.debug("Оружейник %s, %s: из %d обвесов доступно %d (уровни/«нет у меня»)", weapon, label, len(every), len(opts))
         if not opts:
             continue
 
@@ -1290,8 +1334,8 @@ def gunsmith_advice(weapon, installed, mode=0):
         advice.append((label, best, cur))
         build = [n for n in build if not (n in ATTS and ATTS[n][1] in types)] + [best]
     _GUNSMITH_CACHE[key] = (advice, build)
-    log.debug("Оружейник %s (%s): совет %s, сборка %s — за %.0f мс", weapon, GUNSMITH_MODES[mode][0],
-              advice, build, (time.time() - t) * 1000)
+    log.debug("Оружейник %s (%s, фильтр %s): совет %s, сборка %s — за %.0f мс", weapon, GUNSMITH_MODES[mode][0],
+              flt, advice, build, (time.time() - t) * 1000)
     return advice, build
 
 
@@ -1481,6 +1525,9 @@ def apply_language():
 
 # ---------------------------------------------------------------- окно поверх игры
 BG, LINE, TEXT, DIM, ACCENT, GOOD, BAD = "#0e100c", "#3a3f30", "#e9ecdf", "#9aa38a", "#e8a33a", "#5fd068", "#ff5a4e"
+FAINT_SMITH = "#7c8470"   # 2.1: тише обычного серого (сейчас «нет у меня» — оранжевое, цвет про запас)
+ACCENT_SOFT = "#c9a46a"   # 2.1: оранжевый потише (про запас)
+SMITH_GOALS = True        # 2.1: строки «дальше: …» / «закрыто · …» при включённых уровнях (Макс выбрал средний вариант 09.11)
 FONT = "Bahnschrift"
 
 
@@ -1725,7 +1772,7 @@ class OverlayWindow:
             y += 24
         smith = bool(self.settings.get("gunsmith"))
         mode = int(self.settings.get("gunsmith_mode") or 0) % len(GUNSMITH_MODES)
-        advice = gunsmith_advice(state.get("weapon"), cur, mode)[0] if smith else []
+        advice = gunsmith_advice(state.get("weapon"), cur, mode, smith_filter(self.settings))[0] if smith else []
         y = self._render_gunsmith(c, y, advice, smith, mode)
         y = self._render_ttk(c, y, state.get("ttk"))
         y += 4
@@ -1859,8 +1906,16 @@ class OverlayWindow:
                 self.zones.append((x0 - 2, y - 3, bx + 2, y + 18, {"gunsmith_mode": i}))
             bx = x0 - 4
         y += 24
+        levels, missing = smith_filter(self.settings)
+        # 2.1: цель — лучший обвес без учёта уровней (но без «нет у меня»): закрыт — подсказываем, где откроется
+        goals = {}
+        if SMITH_GOALS and levels is not None and self.state and on:
+            full = gunsmith_advice(self.state.get("weapon"), list(self.state.get("attachments") or []),
+                                   mode, (None, missing))[0]
+            goals = {lb: b for lb, b, _ in full}
         for label, best, cur in advice:
             ok = cur == best
+            y0 = y
             c.create_text(pad, y + 2, text=label, fill=DIM, font=(FONT, 8), anchor="nw")
             x = pad + 78
             if ok:
@@ -1869,15 +1924,55 @@ class OverlayWindow:
             c.create_text(x, y, text=best, fill=GOOD if ok else TEXT, font=(FONT, 11, "bold" if ok else "normal"),
                           anchor="nw", width=W - pad - x)
             y += 21
+            if not ok:
+                # 2.1: «нет у меня» под названием слота — Оружейник больше не советует этот обвес, ищет следующий
+                # крестик рисуем линиями (символ ✕ в шрифте плашки съезжал вниз) и ставим по центру строки текста;
+                # цвет — оранжевый оверлея (серый было не видно, Макс 09.11)
+                cy = y0 + 23
+                c.create_line(pad + 1, cy - 3, pad + 7, cy + 3, fill=ACCENT, width=1.6)
+                c.create_line(pad + 1, cy + 3, pad + 7, cy - 3, fill=ACCENT, width=1.6)
+                t = c.create_text(pad + 11, cy, text=T("нет у меня", "don't have"), fill=ACCENT, font=(FONT, 8),
+                                  anchor="w")
+                bx0, by0, bx1, by1 = c.bbox(t)
+                bx0 = pad
+                self.zones.append((bx0 - 3, by0 - 3, bx1 + 3, by1 + 3, {"missing": sorted(set(missing) | {best})}))
+            goal = goals.get(label)
+            if goal and goal != best:   # 2.1: лучший закрыт по уровням — одной тихой строкой: к чему качаться
+                c.create_text(pad + 78, y - 2, text=T(f"дальше: {goal} · {unlock_text(goal, False)}",
+                                                      f"next: {goal} · {unlock_text(goal, False)}"),
+                              fill=DIM, font=(FONT, 8), anchor="nw", width=W - pad * 2 - 78)
+                y += 15
             if cur and not ok:
                 c.create_text(pad + 78, y - 2, text=T(f"сейчас: {cur}", f"now: {cur}"), fill=ACCENT, font=(FONT, 9), anchor="nw",
                               width=W - pad * 2 - 78)
                 y += 17
-        if not advice:
-            c.create_text(pad + 78, y, text=T("для этой пушки советовать нечего", "nothing to suggest for this weapon"), fill=DIM, font=(FONT, 9), anchor="nw")
-            y += 18
-        c.create_text(pad + 78, y, text=T("прицел и магазин — на твой вкус", "sight and magazine — your choice"), fill=DIM, font=(FONT, 8), anchor="nw")
-        return y + 18
+            if not ok and y < y0 + 33:
+                y = y0 + 33          # место под «нет у меня»
+        # 2.1: в слоте ещё ничего не открыто — слот всё равно показываем: что лучшее и где откроется
+        have = {lb for lb, _, _ in advice}
+        for label, goal in [(lb, g) for lb, g in goals.items() if lb not in have]:   # одной строкой, серым
+            c.create_text(pad, y + 2, text=label, fill=DIM, font=(FONT, 8), anchor="nw")
+            c.create_text(pad + 78, y + 2, text=T(f"закрыто · {goal} · {unlock_text(goal, False)}",
+                                                  f"locked · {goal} · {unlock_text(goal, False)}"),
+                          fill=DIM, font=(FONT, 8), anchor="nw", width=W - pad * 2 - 78)
+            y += 25
+        if not advice and not goals:
+            text = (T("всё подходящее ещё закрыто или отмечено «нет у меня»", "everything that fits is locked or marked «don't have»")
+                    if levels is not None or missing else
+                    T("для этой пушки советовать нечего", "nothing to suggest for this weapon"))
+            c.create_text(pad + 78, y, text=text, fill=DIM, font=(FONT, 9), anchor="nw", width=W - pad * 2 - 78)
+            y += 18 if levels is None and not missing else 30
+        hint = T("прицел и магазин — на твой вкус", "sight and magazine — your choice")
+        c.create_text(pad + 78, y, text=hint, fill=DIM, font=(FONT, 8), anchor="nw", width=W - pad * 2 - 78)
+        y += 18
+        if missing:
+            t = c.create_text(pad + 78, y - 2, text=T(f"скрыто «нет у меня»: {len(missing)} · вернуть все",
+                                                      f"hidden «don't have»: {len(missing)} · bring all back"),
+                              fill=DIM, font=(FONT, 8, "underline"), anchor="nw")
+            bx0, by0, bx1, by1 = c.bbox(t)
+            self.zones.append((bx0 - 3, by0 - 3, bx1 + 3, by1 + 3, {"missing": []}))
+            y += 16
+        return y
 
     def _render_plain(self, c, y, state):
         W, pad = self.W, 16
@@ -1908,7 +2003,7 @@ class OverlayWindow:
         if smith:
             # Статы — всегда того, что стоит (поменял обвес — цифры сразу меняются); оружейник добавляет
             # в ту же строку оранжевое «→ сколько станет с советом» и отметку-цель на полоске.
-            advice, advised = gunsmith_advice(state.get("weapon"), names, mode)
+            advice, advised = gunsmith_advice(state.get("weapon"), names, mode, smith_filter(self.settings))
             y = self._render_pair_rows(c, y, compute_pair_rows(names, advised, state.get("weapon"), only))
             return self._render_gunsmith(c, y, advice, smith, mode)
         advice = []
@@ -2374,7 +2469,7 @@ def settings_window(root, settings, on_restart, win=None, ctx=None):
     top = tk.Toplevel(root)
     top.title(f"Wardogs Overlay {VERSION}")
     top.configure(bg=BG)
-    top.resizable(False, False)
+    top.resizable(False, True)     # 2.1: по высоте тянется мышкой (ширину не трогаем — плитки рассчитаны на неё)
     top.attributes("-topmost", True)
     try:
         top.iconbitmap(ICON_FILE)
@@ -2539,19 +2634,45 @@ def settings_window(root, settings, on_restart, win=None, ctx=None):
             message(T(f"Не открылось: {e}", f"Could not open: {e}"))
 
     outer = tk.Frame(top, bg=BG)
-    outer.pack(fill="both")
+    outer.pack(fill="both", expand=True)
     tk.Frame(outer, bg=ACCENT, width=4).pack(side="left", fill="y")     # оранжевая полоса слева, как у плашки
-    # содержимое — на холсте с прокруткой: на маленьком экране (или при масштабе 125–150 %) окно не выше экрана
+    # 2.1: тонкая полоса прокрутки справа в цветах оверлея (видна, только когда всё не влезает)
+    bar = tk.Canvas(outer, width=10, bg=BG, highlightthickness=0, cursor="hand2")
+    bar.pack(side="right", fill="y")
+    # содержимое — на холсте с прокруткой: окно ниже содержимого (маленький экран, масштаб 125–150 %,
+    # человек сам сузил окно) — крутим колесом или полосой справа
     holder = tk.Canvas(outer, bg=BG, highlightthickness=0, yscrollincrement=20)
     holder.pack(side="left", fill="both", expand=True)
     body = tk.Frame(holder, bg=BG, padx=20, pady=12, width=W)
     holder.create_window(0, 0, window=body, anchor="nw")
 
+    def draw_bar(*_):
+        bar.delete("all")
+        f0, f1 = holder.yview()
+        if f1 - f0 >= 0.999:
+            return
+        h = bar.winfo_height()
+        y0, y1 = 4 + f0 * (h - 8), 4 + f1 * (h - 8)
+        bar.create_rectangle(3, 4, 7, h - 4, fill=OFF, width=0)
+        bar.create_rectangle(2, y0, 8, max(y1, y0 + 24), fill=ACCENT, width=0)
+
+    def bar_jump(e):
+        f0, f1 = holder.yview()
+        h = max(1, bar.winfo_height() - 8)
+        holder.yview_moveto(min(1.0, max(0.0, (e.y - 4) / h - (f1 - f0) / 2)))
+
+    bar.bind("<Button-1>", bar_jump)
+    bar.bind("<B1-Motion>", bar_jump)
+    bar.bind("<Configure>", draw_bar)
+    holder.configure(yscrollcommand=draw_bar)
+
     def fit(_=None):
         w, h = body.winfo_reqwidth(), body.winfo_reqheight()
-        holder.configure(width=w, height=min(h, top.winfo_screenheight() - 90), scrollregion=(0, 0, w, h))
+        holder.configure(width=w, scrollregion=(0, 0, w, h))
+        draw_bar()
 
     body.bind("<Configure>", fit)
+    holder.bind("<Configure>", lambda e: draw_bar())
     top.bind("<MouseWheel>", lambda e: holder.yview_scroll(-3 if e.delta > 0 else 3, "units")
              if body.winfo_reqheight() > holder.winfo_height() else None)
 
@@ -2767,6 +2888,92 @@ def settings_window(root, settings, on_restart, win=None, ctx=None):
 
     refreshers.append(obs_visible)
 
+    # ---- карточка «Оружейник» (2.1): мои уровни ролей и «нет у меня»
+    c_sm = card(T("ОРУЖЕЙНИК", "GUNSMITH"), T("советует только то, что у тебя есть", "suggests only what you have"))
+    r = row(c_sm, T("Учитывать мои уровни", "Use my levels"),
+            T("после вайпа уровни сбрасываются — поправь здесь", "levels reset after a wipe — update them here"))
+
+    def levels_now():
+        lv = s.get("levels")
+        return dict(lv) if isinstance(lv, dict) else None
+
+    def flip_levels():
+        lv = levels_now()
+        if lv is None:
+            last = s.get("levels_last")
+            lv = {k: int((last or {}).get(k, 0)) for k, *_ in ROLES}
+            log.info("Пульт: Оружейник учитывает уровни %s", lv)
+            save({"levels": lv})
+        else:
+            log.info("Пульт: Оружейник больше не учитывает уровни (были %s)", lv)
+            save({"levels": None, "levels_last": lv})
+
+    toggle(r, lambda: levels_now() is not None, flip_levels).pack(side="right")
+    grid = tk.Frame(c_sm, bg=PANEL)
+    grid.pack(fill="x", pady=(2, 6))
+    spins = {}
+
+    def level_changed(code, mx):
+        lv = levels_now()
+        if lv is None:
+            return
+        try:
+            v = max(0, min(mx, int(spins[code].get() or 0)))
+        except ValueError:
+            v = int(lv.get(code, 0))
+        spins[code].delete(0, "end")
+        spins[code].insert(0, str(v))
+        if lv.get(code) != v:
+            lv[code] = v
+            log.info("Пульт: уровень %s → %d", code, v)
+            save({"levels": lv})
+
+    for i, (code, ru, en, mx) in enumerate(ROLES):
+        cell = tk.Frame(grid, bg=PANEL)
+        cell.grid(row=i // 3, column=i % 3, sticky="w", padx=(0, 14), pady=2)
+        lab(cell, T(ru, en), 10, TEXT).pack(side="left")
+        sp = tk.Spinbox(cell, from_=0, to=mx, width=4, font=(FONT, 10), bg=RAISED, fg=TEXT, relief="flat",
+                        buttonbackground=RAISED, insertbackground=TEXT, highlightthickness=1, highlightbackground=LINE,
+                        disabledbackground=PANEL, disabledforeground=FAINT,
+                        command=lambda c=code, m=mx: level_changed(c, m))
+        sp.pack(side="left", padx=(6, 0))
+        sp.bind("<FocusOut>", lambda e, c=code, m=mx: level_changed(c, m))
+        sp.bind("<Return>", lambda e, c=code, m=mx: level_changed(c, m))
+        sp.delete(0, "end")
+        sp.insert(0, str(int((levels_now() or s.get("levels_last") or {}).get(code, 0))))
+        spins[code] = sp
+
+    r = row(c_sm, T("Нет у меня", "Don't have"), T("отмечается на плашке: «✕ нет у меня»", "mark it on the panel: «✕ don't have»"))
+    miss_text = tk.StringVar()
+    back = tk.Label(r, text=T("Вернуть все", "Bring all back"), bg=RAISED, fg=TEXT, font=(FONT, 10), padx=10, pady=3,
+                    highlightbackground=LINE, highlightthickness=1)
+    back.pack(side="right")
+
+    def bring_back():
+        if s.get("missing"):
+            log.info("Пульт: вернул в советы %s", s.get("missing"))
+            save({"missing": []})
+            refresh_smith()
+
+    clickable(back, bring_back, hover=ACCENT)
+    lab(r, "", 10, DIM, textvariable=miss_text).pack(side="right", padx=8)
+
+    def refresh_smith():
+        on = levels_now() is not None
+        for code, sp in spins.items():
+            want = "normal" if on else "disabled"
+            if str(sp["state"]) != want:
+                sp.configure(state=want)
+            if on and top.focus_get() is not sp:
+                v = str(int(levels_now().get(code, 0)))
+                if sp.get() != v:
+                    sp.delete(0, "end")
+                    sp.insert(0, v)
+        n = len(s.get("missing") or [])
+        miss_text.set(T(f"скрыто: {n}", f"hidden: {n}") if n else T("ничего", "none"))
+
+    refreshers.append(refresh_smith)
+
     # ---- карточка «Клавиши в игре»: каждая комбинация — своя плитка, клавиши нарисованы как на клавиатуре
     c2 = card(T("КЛАВИШИ В ИГРЕ", "IN-GAME KEYS"), T("нажми на плитку, чтобы поменять", "click a tile to change"))
     combos = tk.Frame(c2, bg=PANEL)
@@ -2929,12 +3136,15 @@ def settings_window(root, settings, on_restart, win=None, ctx=None):
     def show_restart():
         r_text.set(T("Сохранено. Заработает после перезапуска: ", "Saved. Works after a restart: ") + ", ".join(pending))
         if not rbar.winfo_ismapped():
-            rbar.pack(fill="x", pady=(0, 8), before=foot)
+            rbar.pack(fill="x", pady=(0, 8), before=btns)
             top.after(50, lambda: holder.yview_moveto(1.0))   # полосу видно, даже если окно с прокруткой
 
     # ---- подвал: данные и ссылки
     foot = tk.Frame(body, bg=BG)
-    foot.pack(fill="x", pady=(2, 0))
+    # 2.1 (Макс): ссылки и «Данные» — наверху, на месте кнопок под плитками; кнопки — в самый низ
+    foot.pack(fill="x", pady=(0, 10), before=btns)
+    btns.pack_forget()
+    btns.pack(fill="x", pady=(2, 0))
     links = tk.Frame(foot, bg=BG)          # ссылки — строкой, «Данные: …» — под ними (в одну строку не влезает)
     links.pack(fill="x")
     lab(foot, T("Данные: metaforge.app", "Data: metaforge.app"), 8, FAINT).pack(anchor="w", pady=(4, 0))
@@ -2967,14 +3177,100 @@ def settings_window(root, settings, on_restart, win=None, ctx=None):
     tick()
     top.bind("<Escape>", lambda e: cancel_wait() if waiting["key"] else top.destroy())   # Esc: отмена ввода клавиш, иначе закрыть
     top.update_idletasks()
+    # 2.1: высота — сколько человек выставил в прошлый раз, иначе почти весь экран; но не выше рабочей
+    # области (без панели задач — на 1080 низ пульта раньше уходил под неё) и не выше содержимого
     sw, sh = top.winfo_screenwidth(), top.winfo_screenheight()
-    top.geometry(f"+{(sw - top.winfo_width()) // 2}+{max(0, (sh - top.winfo_height()) // 3)}")
+    work_top, work_h = 0, sh
+    try:
+        rect = (ctypes.c_long * 4)()
+        if ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(rect), 0):   # SPI_GETWORKAREA
+            work_top, work_h = rect[1], rect[3] - rect[1]
+    except Exception:
+        log.exception("Пульт: не узнал рабочую область экрана")
+    deco = max(30, top.winfo_rooty() - top.winfo_y()) + 10      # заголовок окна и рамка
+    content_h = body.winfo_reqheight()
+    max_h = work_h - deco - 8
+    want = int(s.get("pult_height") or max_h)
+    min_h = min(320, content_h)
+    h = max(min_h, min(want, content_h, max_h))
+    top.minsize(top.winfo_width(), min_h)
+    top.maxsize(top.winfo_width(), max(min_h, min(content_h, max_h)))
+    y = work_top + max(0, (work_h - h - deco) // 3)
+    top.geometry(f"{top.winfo_width()}x{h}+{(sw - top.winfo_width()) // 2}+{y}")
+    log.info("Пульт: экран %dx%d, рабочая область %d (с %d), содержимое %d, запомнено %s → высота окна %d",
+             sw, sh, work_h, work_top, content_h, s.get("pult_height"), h)
+    sized = {"h": h, "job": None}
+
+    def remember_height(e):
+        if e.widget is not top or e.height == sized["h"]:
+            return
+        sized["h"] = e.height
+        if sized["job"]:
+            top.after_cancel(sized["job"])
+
+        def store():
+            sized["job"] = None
+            log.info("Пульт: человек поменял высоту окна → %d", sized["h"])
+            save({"pult_height": sized["h"]})
+
+        sized["job"] = top.after(700, store)
+
+    top.after(300, lambda: top.winfo_exists() and top.bind("<Configure>", remember_height, add="+"))
     top.lift()
     top.focus_force()
     # «поверх всех» — только чтобы появиться над игрой; дальше обычное окно (Alt+Tab, другие программы — поверх)
     top.after(600, lambda: top.winfo_exists() and top.attributes("-topmost", False))
     log.info("Открыл пульт (окно настроек)")
     return top
+
+
+def clean_old_mei():
+    """2.1: до 2.1 оверлей был одним .exe и при каждом запуске распаковывался в %TEMP%\\_MEIxxxxx (~210 МБ),
+    а при закрытии через диспетчер задач / вместе с ПК папка оставалась (у Макса набралось 4,5 ГБ).
+    С 2.1 программа — папка (распаковки нет), а старые наши папки удаляем один раз при запуске.
+    Наша папка = в ней лежат overlay.html и ref_moduli.png. Занятую (её ещё использует запущенная старая
+    версия) Windows не даст переименовать — такую пропускаем."""
+    t0 = time.time()
+    tmp = os.environ.get("TEMP") or os.environ.get("TMP") or ""
+    found = removed = 0
+    freed = 0
+    try:
+        names = [n for n in os.listdir(tmp) if n.startswith("_MEI")]
+    except OSError as e:
+        log.warning("Чистка _MEI: не могу открыть временную папку %r: %s", tmp, e)
+        return
+    for n in names:
+        path = os.path.join(tmp, n)
+        if os.path.normcase(path) == os.path.normcase(BUNDLE):
+            continue
+        if not (os.path.isfile(os.path.join(path, "overlay.html")) and os.path.isfile(os.path.join(path, "ref_moduli.png"))):
+            continue          # чужая программа на PyInstaller — не трогаем
+        found += 1
+        size = 0
+        for root_dir, _, files in os.walk(path):
+            for f in files:
+                try:
+                    size += os.path.getsize(os.path.join(root_dir, f))
+                except OSError:
+                    pass
+        trash = path + "_del"
+        try:
+            os.rename(path, trash)      # не переименовывается — значит, занята запущенной старой копией
+        except OSError as e:
+            log.info("Чистка _MEI: %s занята (%s) — пропускаю", n, e)
+            continue
+        shutil.rmtree(trash, ignore_errors=True)
+        if os.path.exists(trash):
+            log.warning("Чистка _MEI: %s удалилась не до конца", n)
+        else:
+            removed += 1
+            freed += size
+            log.info("Чистка _MEI: удалил %s (%.0f МБ)", n, size / 1024 / 1024)
+    log.info("Чистка _MEI: наших старых папок %d, удалено %d, освобождено %.0f МБ, за %.1f с",
+             found, removed, freed / 1024 / 1024, time.time() - t0)
+    if removed:
+        ev(T(f"Удалил мусор старых версий во временной папке: {freed / 1024 / 1024:.0f} МБ",
+             f"Removed old versions' leftovers from the temp folder: {freed / 1024 / 1024:.0f} MB"), "dim")
 
 
 def main():
@@ -3025,16 +3321,22 @@ def main():
             ok = take_single_instance()
             if ok:
                 break
+    if not ok and ask_running_to_show():
+        log.info("Уже запущена другая копия — попросил её показать пульт, эта закрывается")
+        return
     if not ok:
-        log.warning("Уже запущена другая копия — эта закрывается")
+        log.warning("Уже запущена другая копия (старой версии) — эта закрывается")
         message(T("Оверлей Wardogs уже запущен.\n\nЕго меню — значок у часов (правой кнопкой). "
                   "Чтобы перезапустить — сначала выйди из него.",
                   "Wardogs overlay is already running.\n\nIts menu is the tray icon next to the clock (right click). "
                   "To restart it, exit it first."))
         return
     listen_for_quit()
+    listen_for_show()
     events_start()
     ev(T(f"Версия {VERSION}", f"Version {VERSION}"), "dim")
+    if FROZEN:
+        threading.Thread(target=clean_old_mei, daemon=True, name="чистка _MEI").start()
     SCAN["hotkey"] = str(settings.get("hotkey", "Ctrl+Shift+O"))
     listen_hotkey(SCAN["hotkey"])
     listen_compare_key(str(settings.get("compare_hotkey", "Ctrl+Shift+S")))
@@ -3109,6 +3411,11 @@ def main():
             if "--settings" in sys.argv:
                 log.info("Перезапустился из пульта — открываю пульт снова")
                 UI_ACTIONS.append("settings")
+            elif tray_mode and "--restarted" not in sys.argv:
+                # 2.1 (Макс): запустил двойным щелчком — сразу пульт, иначе кажется, что программа не открылась
+                log.info("Обычный запуск — открываю пульт сразу")
+                UI_ACTIONS.append("settings")
+            pult = {"was_open": False}
 
             def tick():
                 if server.quit_event.is_set():
@@ -3131,6 +3438,17 @@ def main():
                             except Exception:
                                 log.exception("Пульт не открылся")
                                 ev(T("Пульт не открылся — подробности в overlay.log", "Control panel failed — see overlay.log"), "err")
+                # 2.1 (Макс): пульт закрыли — подсказка у значка, что программа работает в фоне, а не закрылась
+                top_now = opened["settings"]
+                is_open = top_now is not None and top_now.winfo_exists()
+                if pult["was_open"] and not is_open and not RESTART.get("now") and tray:
+                    log.info("Пульт закрыт — программа работает дальше, показываю подсказку у значка")
+                    tray.notify(T("Оверлей Wardogs работает в фоне", "Wardogs overlay keeps running"),
+                                T("Он здесь, у часов — значок W. Настройки — двойной щелчок по значку, "
+                                  "выход — правой кнопкой → Выход.",
+                                  "It's here by the clock — the W icon. Settings — double-click the icon, "
+                                  "exit — right click → Exit."))
+                pult["was_open"] = is_open
                 if show:
                     win.move_to(PLACEMENT["pos"])
                     win.render(server.get_state())
@@ -3222,6 +3540,7 @@ def start_tray(settings, ctx):
 # (сервер для OBS теперь по желанию). Имена общие для всех версий программы.
 SINGLE_INSTANCE_MUTEX = "WardogsOverlaySingleInstance"
 QUIT_EVENT_NAME = "WardogsOverlayQuit"
+SHOW_EVENT_NAME = "WardogsOverlayShowPult"   # 2.1: второй запуск .exe просит работающую копию показать пульт
 _handles = []   # держим, пока программа работает (иначе Windows их закроет)
 
 
@@ -3258,6 +3577,35 @@ def listen_for_quit():
         server.quit_event.set()
 
     threading.Thread(target=wait, daemon=True, name="ждёт-выключения").start()
+
+
+def listen_for_show():
+    """2.1: человек снова запустил .exe, а программа уже работает — та копия шлёт событие, мы открываем пульт."""
+    k = ctypes.windll.kernel32
+    k.CreateEventW.restype = ctypes.c_void_p
+    k.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    h = k.CreateEventW(None, False, False, SHOW_EVENT_NAME)    # сбрасывается само после каждого срабатывания
+    _handles.append(h)
+
+    def wait():
+        while True:
+            k.WaitForSingleObject(h, 0xFFFFFFFF)
+            log.info("Программу запустили ещё раз — показываю пульт")
+            UI_ACTIONS.append("settings")
+
+    threading.Thread(target=wait, daemon=True, name="ждёт-второй-запуск").start()
+
+
+def ask_running_to_show():
+    """Попросить уже работающую копию показать пульт. False — она старой версии (не слушает) или её нет."""
+    k = ctypes.windll.kernel32
+    k.OpenEventW.restype = ctypes.c_void_p
+    h = k.OpenEventW(0x0002, False, SHOW_EVENT_NAME)          # EVENT_MODIFY_STATE
+    if not h:
+        return False
+    ok = bool(k.SetEvent(ctypes.c_void_p(h)))
+    k.CloseHandle(ctypes.c_void_p(h))
+    return ok
 
 
 # Клавиши, которые можно назначить и без Ctrl/Shift/Alt (Макс, 01.11): они почти нигде не нужны.
@@ -3391,7 +3739,7 @@ def plate_model(state, settings):
             return 0
         return max(-1.0, min(1.0, (m - 1) * 100 * (-1 if better == "low" else 1) / scale))
 
-    advice, advised = gunsmith_advice(weapon, names, mode) if smith else ([], None)
+    advice, advised = gunsmith_advice(weapon, names, mode, smith_filter(settings)) if smith else ([], None)
     if view:
         rows = compute_compare(view[0], view[1], weapon, only)
         out["stats"] = {"kind": "compare",

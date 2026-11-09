@@ -43,7 +43,7 @@ if FROZEN and len(sys.argv) == 1:              # двойной щелчок п�
     sys.argv.append("--tray")
 import server  # noqa: E402
 
-VERSION = "2.1"
+VERSION = "2.1.1"
 LANG = {"code": "ru"}     # язык интерфейса для игрока: "ru" / "en" (настройка "language": auto / ru / en)
 
 
@@ -2666,10 +2666,21 @@ def settings_window(root, settings, on_restart, win=None, ctx=None):
     bar.bind("<Configure>", draw_bar)
     holder.configure(yscrollcommand=draw_bar)
 
+    width_state = {"w": None}      # 2.1.1: ширина окна, которую мы выставили (None — ещё не открыли)
+
     def fit(_=None):
         w, h = body.winfo_reqwidth(), body.winfo_reqheight()
         holder.configure(width=w, scrollregion=(0, 0, w, h))
         draw_bar()
+        # 2.1.1: содержимое стало шире окна (подписчик: пульт обрезан справа) — расширяем окно под него
+        if width_state["w"] is not None:
+            need = 4 + w + int(bar.cget("width"))
+            if need > width_state["w"]:
+                log.info("Пульт: содержимое шире окна (%d > %d) — расширяю", need, width_state["w"])
+                width_state["w"] = need
+                top.minsize(need, top.minsize()[1])
+                top.maxsize(need, top.maxsize()[1])
+                top.geometry(f"{need}x{top.winfo_height()}")
 
     body.bind("<Configure>", fit)
     holder.bind("<Configure>", lambda e: draw_bar())
@@ -3188,17 +3199,24 @@ def settings_window(root, settings, on_restart, win=None, ctx=None):
     except Exception:
         log.exception("Пульт: не узнал рабочую область экрана")
     deco = max(30, top.winfo_rooty() - top.winfo_y()) + 10      # заголовок окна и рамка
+    # 2.1.1: ширину считаем по содержимому (полоса слева 4 + поле + полоса прокрутки), а не замеряем окно:
+    # поле получает ширину в обработчике <Configure>, который на медленном ПК не успевает до замера —
+    # тогда окно оставалось узким и обрезало пульт справа (скрин подписчика 09.11)
+    fit()
+    top.update_idletasks()
+    win_w = 4 + body.winfo_reqwidth() + int(bar.cget("width"))
+    width_state["w"] = win_w
     content_h = body.winfo_reqheight()
     max_h = work_h - deco - 8
     want = int(s.get("pult_height") or max_h)
     min_h = min(320, content_h)
     h = max(min_h, min(want, content_h, max_h))
-    top.minsize(top.winfo_width(), min_h)
-    top.maxsize(top.winfo_width(), max(min_h, min(content_h, max_h)))
+    top.minsize(win_w, min_h)
+    top.maxsize(win_w, max(min_h, min(content_h, max_h)))
     y = work_top + max(0, (work_h - h - deco) // 3)
-    top.geometry(f"{top.winfo_width()}x{h}+{(sw - top.winfo_width()) // 2}+{y}")
-    log.info("Пульт: экран %dx%d, рабочая область %d (с %d), содержимое %d, запомнено %s → высота окна %d",
-             sw, sh, work_h, work_top, content_h, s.get("pult_height"), h)
+    top.geometry(f"{win_w}x{h}+{(sw - win_w) // 2}+{y}")
+    log.info("Пульт: экран %dx%d, рабочая область %d (с %d), содержимое %dx%d, запомнено %s → окно %dx%d",
+             sw, sh, work_h, work_top, body.winfo_reqwidth(), content_h, s.get("pult_height"), win_w, h)
     sized = {"h": h, "job": None}
 
     def remember_height(e):

@@ -11,7 +11,7 @@ Works with the **English and Russian** game; the program itself speaks both (RU 
 
 ### Download and run
 
-1. Open **[Releases](../../releases)** and download `WardogsOverlay_v2.1.zip`.
+1. Open **[Releases](../../releases)** and download `WardogsOverlay_v2.1.1.zip`.
 2. Extract it (right click → «Extract All…»). Don't run it from inside the zip.
 3. Run **`WardogsOverlay.exe`** (keep it together with the `_internal` folder). Nothing to install. The control panel opens and a **W** icon appears next to the clock.
 4. In the game: screen mode **«Borderless windowed»**, then **Equipment Vendor → Equipment → ATTC.** or **AMMO**.
@@ -19,6 +19,10 @@ Works with the **English and Russian** game; the program itself speaks both (RU 
 If Windows says «Windows protected your PC» — «More info» → «Run anyway» (the program is home-made and not signed).
 Guide on Steam: [English](https://steamcommunity.com/sharedfiles/filedetails/?id=3831395119) ·
 [Russian](https://steamcommunity.com/sharedfiles/filedetails/?id=3822235930).
+
+### New in 2.1.1
+
+- Fixed: on some PCs the control panel opened too narrow and cut off its right edge. The width is now calculated from the content.
 
 ### New in 2.1
 
@@ -91,13 +95,17 @@ Requirements: Windows 10/11 64-bit.
 
 ### Скачать и запустить
 
-1. Открой **[Releases](../../releases)** и скачай `WardogsOverlay_v2.1.zip`.
+1. Открой **[Releases](../../releases)** и скачай `WardogsOverlay_v2.1.1.zip`.
 2. Распакуй (правой кнопкой → «Извлечь всё…»). Из самого архива не запускай.
 3. Запусти **`WardogsOverlay.exe`** (рядом с ним должна лежать папка `_internal`). Ничего ставить не нужно. Откроется пульт, у часов появится значок **W**.
 4. В игре: режим экрана **«Оконный без рамки»**, затем **Продавец → Экипировка → Модули** или **Боеприпасы**.
 
 Если Windows покажет «Система Windows защитила ваш компьютер» — «Подробнее» → «Выполнить в любом случае»
 (программа самодельная и не подписана).
+
+### Новое в 2.1.1
+
+- Исправлено: у некоторых пульт открывался узким и обрезал правый край. Ширина теперь считается по содержимому.
 
 ### Новое в 2.1
 
@@ -167,6 +175,7 @@ tests/test_ttk.py        — сверка TTK с эталоном MetaForge (tes
 tests/test_ammo.py       — проверка вкладки «Боеприпасы»
 tests/test_gunsmith.py, test_ttk_dist.py, test_english.py, test_pult.py, test_obs.py — оружейник, дистанции, английский, пульт, OBS
 tests/test_smith_levels.py, test_clean_mei.py, test_pult_size.py, test_en_21.py — 2.1: уровни и «нет у меня», чистка _MEI, размер пульта, английский
+tests/test_pult_width.py — 2.1.1: пульт не обрезается справа (и с крупными шрифтами)
 ```
 
 Запуск из кода: Python 3.12 с `numpy`, `opencv-python-headless`, `mss`, `rapidocr-onnxruntime`;

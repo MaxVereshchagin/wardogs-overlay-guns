@@ -24,7 +24,7 @@ def check(name, cond, info=""):
         print("ОШИБКА:", name, info)
 
 
-EXPECT = {"M4": (None, 500), "AK74": (None, 500), "M249 SAW": (None, 500), "M14": (None, 500),
+EXPECT = {"M4": (None, 500), "AK74": (None, 500), "M249 SAW": (None, 500), "M14": (None, 550),   # 2.2: 3 сезон, M14 урон калибра −15→−9 %
           "SVD": (None, 800), "SV98": (None, 1000), "Super-45": ([50, 75, 100], None),
           "MP5": ([50, 150, 175], None), "GGX 18": ([50, 75, 100], None), "Deagle": ([50, 100, 125], None),
           "PP-19 Bizon": ([50, 250, 300], None)}
@@ -45,10 +45,10 @@ for w in wo.WEAPONS:
     except Exception as e:
         check(f"{w}: план без ошибки", False, repr(e))
 
-# TTK на 50 м совпадает со старым (как в ролике «Топ-3»): M14, броня 3, тело — 5 выстрелов, 0,40 с
+# TTK на 50 м: M14, броня 3, тело. 2 сезон (ролик «Топ-3») — 5 выстрелов 0,40 с; 3 сезон (2.2) — 4 выстрела 0,32 с
 cells = wo.ttk_cells("M14", "FMJ", "torso_upper", 50)
-check("M14 броня 3 на 50 м = 5 выстрелов", cells[3][0] == 5, cells)
-check("M14 броня 3 на 50 м ≈ 0,40 с", abs(cells[3][1] - 0.40) < 0.015, cells)
+check("M14 броня 3 на 50 м = 4 выстрела", cells[3][0] == 4, cells)
+check("M14 броня 3 на 50 м ≈ 0,32 с", abs(cells[3][1] - 0.32) < 0.015, cells)
 
 out = os.path.join(HERE, "screens", "ttk_dist")
 os.makedirs(out, exist_ok=True)

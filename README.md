@@ -11,7 +11,7 @@ Works with the **English and Russian** game; the program itself speaks both (RU 
 
 ### Download and run
 
-1. Open **[Releases](../../releases)** and download `WardogsOverlay_v2.1.1.zip`.
+1. Open **[Releases](../../releases)** and download `WardogsOverlay_v2.2.zip`.
 2. Extract it (right click → «Extract All…»). Don't run it from inside the zip.
 3. Run **`WardogsOverlay.exe`** (keep it together with the `_internal` folder). Nothing to install. The control panel opens and a **W** icon appears next to the clock.
 4. In the game: screen mode **«Borderless windowed»**, then **Equipment Vendor → Equipment → ATTC.** or **AMMO**.
@@ -19,6 +19,13 @@ Works with the **English and Russian** game; the program itself speaks both (RU 
 If Windows says «Windows protected your PC» — «More info» → «Run anyway» (the program is home-made and not signed).
 Guide on Steam: [English](https://steamcommunity.com/sharedfiles/filedetails/?id=3831395119) ·
 [Russian](https://steamcommunity.com/sharedfiles/filedetails/?id=3822235930).
+
+### New in 2.2 — Season 3
+
+- **Database updated for Season 3** (MetaForge data, game build of Nov 12): damage per body zone, ammo, recoil, unlock levels.
+  Assault rifles and LMGs got their Season 1 chest damage back (one bullet less vs armor almost everywhere); marksman rifles are stronger
+  (more head/body damage, smaller calibre penalty for SVD, M14, BMR-308; new armor penalty for SKS); TCX-SPR has less recoil; the bow shoots faster arrows.
+- Fixed: «Update database» did not work in 2.1 (the old database stayed). It updates now.
 
 ### New in 2.1.1
 
@@ -95,13 +102,20 @@ Requirements: Windows 10/11 64-bit.
 
 ### Скачать и запустить
 
-1. Открой **[Releases](../../releases)** и скачай `WardogsOverlay_v2.1.1.zip`.
+1. Открой **[Releases](../../releases)** и скачай `WardogsOverlay_v2.2.zip`.
 2. Распакуй (правой кнопкой → «Извлечь всё…»). Из самого архива не запускай.
 3. Запусти **`WardogsOverlay.exe`** (рядом с ним должна лежать папка `_internal`). Ничего ставить не нужно. Откроется пульт, у часов появится значок **W**.
 4. В игре: режим экрана **«Оконный без рамки»**, затем **Продавец → Экипировка → Модули** или **Боеприпасы**.
 
 Если Windows покажет «Система Windows защитила ваш компьютер» — «Подробнее» → «Выполнить в любом случае»
 (программа самодельная и не подписана).
+
+### Новое в 2.2 — 3 сезон
+
+- **База обновлена под 3 сезон** (данные MetaForge, сборка игры от 12.11): урон по зонам тела, патроны, отдача, уровни открытия.
+  Штурмовым и пулемётам вернули урон в грудь как в 1 сезоне (в броне почти везде на 1 пулю меньше); марксманки сильнее
+  (больше урон в голову и тело, у SVD, M14, BMR-308 меньше штраф калибра, у SKS новый штраф по броне); у TCX-SPR меньше отдача; у лука быстрее стрела.
+- Исправлено: «Обновить базу» в 2.1 не срабатывало (база оставалась старой). Теперь обновляется.
 
 ### Новое в 2.1.1
 

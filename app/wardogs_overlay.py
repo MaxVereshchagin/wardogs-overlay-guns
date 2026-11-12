@@ -43,7 +43,7 @@ if FROZEN and len(sys.argv) == 1:              # двойной щелчок п�
     sys.argv.append("--tray")
 import server  # noqa: E402
 
-VERSION = "2.1.1"
+VERSION = "2.2"
 LANG = {"code": "ru"}     # язык интерфейса для игрока: "ru" / "en" (настройка "language": auto / ru / en)
 
 

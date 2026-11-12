@@ -145,7 +145,10 @@ def load_old():
         return None
     js = open(path, encoding="utf-8-sig").read()
     try:
-        return json.loads(js[js.index("{"): js.rindex("}") + 1])
+        # 2.2: искать от «window.WARDOGS» — в шапке-комментарии (с 2.1) есть «{название: …}», и поиск
+        # первой «{» ломал повторное обновление базы
+        i = js.find("window.WARDOGS")
+        return json.loads(js[js.index("{", max(i, 0)): js.rindex("}") + 1])
     except ValueError:   # старый формат (до обновлятора) — W и A отдельными кусками
         W = json.loads(re.search(r"W:(\[.*?\]\]),\s*\n", js, re.S).group(1))
         A = json.loads(re.search(r"A:(\[.*\])\s*\};", js, re.S).group(1))
